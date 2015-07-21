@@ -29,6 +29,7 @@ private:
 static const duration ACK_DELAY = 20_msec;
 static const duration MIN_RTO = 50_msec;
 static const duration MAX_RTO = 1000_msec;
+static const duration KEEP_ALIVE = 5000_msec;
 static const size_t WINDOW = 1024*1024;
 static const size_t MSS = 1024;
 
@@ -147,11 +148,13 @@ private:
 	bool on_packet(const char* buffer, size_t size);
 	void send_ack(seq_t ack, size_t window, timestamp_t stamp);
 	void send_seq(seq_t seq, const char* buf, size_t len);
+	void do_keepalive();
 	timer_mgr& m_tm;
 	udp_port& m_udp;
 	tcp_socket& m_tcp;
 	udp_endpoint m_remote;
 	flow_send m_send;
 	flow_recv m_recv;
+	timer_id m_keepalive;
 };
 	

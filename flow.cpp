@@ -11,7 +11,9 @@ flow_recv::flow_recv(timer_mgr& tm, tcp_socket& sink, const send_func_t& do_send
 	, m_ack_seq(0)
 	, m_head_seq(0)
 	, m_ack_timer(0)
-{}
+{
+	
+}
 
 void flow_recv::on_packet(seq_t seq, timestamp_t stamp, const char* data, size_t len)
 {
@@ -356,6 +358,10 @@ struct seq_header {
 
 void udp_flow_mgr::send_ack(seq_t ack, size_t window, timestamp_t stamp)
 {
+	// Push back keepalive
+	m_tm.cancel(m_keepalive);
+	m_keepalive = m_tm.add(now() + KEEP_ALIVE, [this]() { do_keepalive(); });
+	// Send ack
 	ack_header hdr;
 	hdr.type = htonl(0);
 	hdr.ack = htonl(uint32_t(ack));
@@ -367,6 +373,9 @@ void udp_flow_mgr::send_ack(seq_t ack, size_t window, timestamp_t stamp)
 
 void udp_flow_mgr::send_seq(seq_t seq, const char* buf, size_t len)
 {
+	// Push back keepalive
+	m_tm.cancel(m_keepalive);
+	m_keepalive = m_tm.add(now() + KEEP_ALIVE, [this]() { do_keepalive(); });
 	// TODO: Fix pointless memcpy here
 	char pbuf[sizeof(seq_header) + MSS];
 	seq_header& hdr = *((seq_header*) pbuf);
@@ -414,6 +423,11 @@ bool udp_flow_mgr::on_packet(const char* buffer, size_t size)
 			len);	
 	}
 	return false;
+}
+
+void udp_flow_mgr::do_keepalive() {
+	m_udp.send(m_remote, "KEEP", 4);
+	m_keepalive =m_tm.add(now() + KEEP_ALIVE, [this]() { do_keepalive(); });
 }
 
 int main(int argc, char* argv[]) {
