@@ -12,12 +12,12 @@ public:
 	typedef std::function<void ()> failure_handler_t;
 	typedef std::function<bencode_t (const bencode_t&)> query_handler_t;
 	dht_rpc(timer_mgr& tm, udp_port& udp);
-	void send_request(const endpoint& who, const std::string& rtype, const bencode_t& args, 
+	void send_request(const udp_endpoint& who, const std::string& rtype, const bencode_t& args, 
 		const success_handler_t& on_success, const failure_handler_t& on_failure);
 private:
-	bool on_incoming(const endpoint& who, const char* buf, size_t len);
-	void on_query(const endpoint& who, be_map& query);
-	void on_response(const endpoint& who, const std::string& type, be_map& resp);
+	bool on_incoming(const udp_endpoint& who, const char* buf, size_t len);
+	void on_query(const udp_endpoint& who, be_map& query);
+	void on_response(const udp_endpoint& who, const std::string& type, be_map& resp);
 	void on_timeout(timer_id tid);
 	timer_mgr& m_tm;
 	udp_port& m_udp;

@@ -8,12 +8,12 @@ dht_rpc::dht_rpc(timer_mgr& tm, udp_port& udp)
 	, m_udp(udp)
 	, m_next_tid(0)
 {
-	m_udp.add_protocol([this](const endpoint& who, const char* buf, size_t len) -> bool {
+	m_udp.add_protocol([this](const udp_endpoint& who, const char* buf, size_t len) -> bool {
 		return on_incoming(who, buf, len);
 	});
 }
 
-void dht_rpc::send_request(const endpoint& who, const std::string& rtype, const bencode_t& args,
+void dht_rpc::send_request(const udp_endpoint& who, const std::string& rtype, const bencode_t& args,
                 const success_handler_t& on_success, const failure_handler_t& on_failure)
 {
 	uint16_t tid = m_next_tid++;
@@ -33,7 +33,7 @@ void dht_rpc::send_request(const endpoint& who, const std::string& rtype, const 
 	m_udp.send(who, coded.data(), coded.size());
 }
 
-bool dht_rpc::on_incoming(const endpoint& who, const char* buf, size_t len)
+bool dht_rpc::on_incoming(const udp_endpoint& who, const char* buf, size_t len)
 {
 	if (len == 0 || buf[0] != 'd') {
 		return false;
@@ -56,11 +56,11 @@ bool dht_rpc::on_incoming(const endpoint& who, const char* buf, size_t len)
 	return true;
 }
 
-void dht_rpc::on_query(const endpoint& who, be_map& query)
+void dht_rpc::on_query(const udp_endpoint& who, be_map& query)
 {
 }
 
-void dht_rpc::on_response(const endpoint& who, const std::string& type, be_map& resp)
+void dht_rpc::on_response(const udp_endpoint& who, const std::string& type, be_map& resp)
 {
 	std::string tid_str = boost::get<std::string>(resp["t"]);
 	runtime_assert(tid_str.size() == 2);
@@ -90,7 +90,7 @@ int main()
 	timer_mgr tm(ios);
 	udp_port up(ios, 5000);
 	dht_rpc rpc(tm, up);
-	endpoint ep = ep_from_string("67.215.246.10", 6881);
+	udp_endpoint ep = udp_resolve("67.215.246.10", "6881");
 
 	rpc.send_request(ep, "ping", be_map({{"id" , "01234567890123456789"}}),
 		[](const bencode_t& a) {

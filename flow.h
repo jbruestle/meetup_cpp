@@ -142,7 +142,7 @@ private:
 class udp_flow_mgr
 {
 public:
-	udp_flow_mgr(timer_mgr& mgr, udp_port& udp, tcp_socket& tcp, endpoint remote);
+	udp_flow_mgr(timer_mgr& mgr, udp_port& udp, tcp_socket& tcp, udp_endpoint remote);
 private:
 	bool on_packet(const char* buffer, size_t size);
 	void send_ack(seq_t ack, size_t window, timestamp_t stamp);
@@ -150,7 +150,7 @@ private:
 	timer_mgr& m_tm;
 	udp_port& m_udp;
 	tcp_socket& m_tcp;
-	endpoint m_remote;
+	udp_endpoint m_remote;
 	flow_send m_send;
 	flow_recv m_recv;
 };

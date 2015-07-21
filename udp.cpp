@@ -4,7 +4,7 @@
 using boost::asio::ip::udp;
 
 udp_port::udp_port(io_service& ios, uint16_t port)
-	: m_socket(ios, udp::endpoint(udp::v4(), port))
+	: m_socket(ios, udp_endpoint(udp::v4(), port))
 {
 	start_recv();
 }
@@ -14,7 +14,7 @@ void udp_port::add_protocol(const protocol_hander_t& proto)
 	m_protocols.push_back(proto);
 }
 
-void udp_port::send(const endpoint& dest, const char* buf, size_t len)
+void udp_port::send(const udp_endpoint& dest, const char* buf, size_t len)
 {
 	boost::system::error_code err;
 	m_socket.send_to(boost::asio::buffer(buf, len), dest, 0, err);

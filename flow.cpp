@@ -321,7 +321,7 @@ void flow_send::get_flight_head(char* buf, size_t len)
 	}
 }
 
-udp_flow_mgr::udp_flow_mgr(timer_mgr& tm, udp_port& udp, tcp_socket& tcp, endpoint remote)
+udp_flow_mgr::udp_flow_mgr(timer_mgr& tm, udp_port& udp, tcp_socket& tcp, udp_endpoint remote)
 	: m_tm(tm)
 	, m_udp(udp)
 	, m_tcp(tcp)
@@ -329,7 +329,7 @@ udp_flow_mgr::udp_flow_mgr(timer_mgr& tm, udp_port& udp, tcp_socket& tcp, endpoi
 	, m_send(tm, tcp, [this](seq_t seq, const char* buf, size_t len) { send_seq(seq, buf, len); })
 	, m_recv(tm, tcp, [this](seq_t ack, size_t window, timestamp_t stamp) { send_ack(ack, window, stamp); }) 
 {
-	m_udp.add_protocol([this, remote](const endpoint& src, const char* buf, size_t len) -> bool {
+	m_udp.add_protocol([this, remote](const udp_endpoint& src, const char* buf, size_t len) -> bool {
 		if (src != remote) {
 			LOG_DEBUG("Invalid remote address");
 			return false;
@@ -416,21 +416,19 @@ bool udp_flow_mgr::on_packet(const char* buffer, size_t size)
 int main(int argc, char* argv[]) {
 	try {
 		if (argc != 5) {
-			fprintf(stderr, "Usage: <host> <tcp_port> <udp_port> <remote_port>\n");
+			fprintf(stderr, "Usage: <tcp_port> <upd_port> <remote_host> <remote_port>\n");
 			return 1;
 		}
 		io_service ios;
 
-		boost::asio::ip::tcp::resolver resolver(ios);
-		boost::asio::ip::tcp::resolver::query query(boost::asio::ip::tcp::v4(), argv[1], argv[2]);
-		boost::asio::ip::tcp::resolver::iterator it = resolver.resolve(query);
-
+		tcp_endpoint tcp_ep = tcp_resolve(ios, "127.0.0.1", argv[1]);
+		udp_endpoint udp_ep = udp_resolve(ios, argv[3], argv[4]);
 		boost::asio::ip::tcp::socket tcp(ios);
-		boost::asio::connect(tcp, it);
+		tcp.connect(tcp_ep);
 
 		timer_mgr tm(ios); 
-		udp_port udp(ios, atoi(argv[3]));
-		udp_flow_mgr fm(tm, udp, tcp, ep_from_string("127.0.0.1", atoi(argv[4])));
+		udp_port udp(ios, atoi(argv[2]));
+		udp_flow_mgr fm(tm, udp, tcp, udp_ep);
 		ios.run();
 	}	
 	catch (std::exception& e) {
