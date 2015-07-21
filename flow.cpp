@@ -202,6 +202,7 @@ void flow_send::on_ack(seq_t ack, size_t window, const duration* rtt)
 			return;
 		} else {
 			m_cwnd = std::min(m_sst, flight_size() + MSS);
+			m_in_recover = false;
 		}
 	}
 	// Update congestion window
