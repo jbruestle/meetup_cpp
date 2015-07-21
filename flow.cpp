@@ -341,6 +341,7 @@ udp_flow_mgr::udp_flow_mgr(timer_mgr& tm, udp_port& udp, tcp_socket& tcp, udp_en
 		}
 		return on_packet(buf, len);
 	});
+	do_keepalive();
 }
 
 struct ack_header {
@@ -426,6 +427,7 @@ bool udp_flow_mgr::on_packet(const char* buffer, size_t size)
 }
 
 void udp_flow_mgr::do_keepalive() {
+	LOG_DEBUG("Sending keepalive");
 	m_udp.send(m_remote, "KEEP", 4);
 	m_keepalive =m_tm.add(now() + KEEP_ALIVE, [this]() { do_keepalive(); });
 }
