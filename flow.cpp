@@ -73,6 +73,7 @@ void flow_recv::start_write()
 	size_t len = it->second.size() - skip;
 	// Write it out
 	LOG_DEBUG("   starting write: head_seq = %u, len = %u", uint32_t(m_head_seq), uint32_t(len));
+	m_write_pending = true;
 	m_sink.async_write_some(boost::asio::buffer(buf, len),
 		[this](const boost::system::error_code& err, size_t len) {
 			write_complete(err, len);
@@ -82,6 +83,7 @@ void flow_recv::start_write()
 
 void flow_recv::write_complete(const boost::system::error_code& err, size_t len)
 {
+	m_write_pending = false;
 	if (err) {
 		LOG_WARN("TODO: Do something here!!!!");
 		m_err = err;
