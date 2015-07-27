@@ -432,6 +432,7 @@ void udp_flow_mgr::do_keepalive() {
 	m_keepalive =m_tm.add(now() + KEEP_ALIVE, [this]() { do_keepalive(); });
 }
 
+/*
 int main(int argc, char* argv[]) {
 	try {
 		if (argc != 5) {
@@ -454,4 +455,4 @@ int main(int argc, char* argv[]) {
 		fprintf(stderr, "Exception: %s\n", e.what());
 	}
 }
-
+*/
