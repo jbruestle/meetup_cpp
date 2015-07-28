@@ -65,10 +65,11 @@ private:
 
 struct dht_node
 {
-	dht_node(const udp_endpoint& addr, const node_id& nid);
+	dht_node(const udp_endpoint& addr, const node_id& nid, int depth);
 
 	udp_endpoint addr;
 	node_id nid;
+	int depth;
 	uint32_t rand_key;
 	uint32_t responses;  // Total number of responses
 	uint32_t errors;  // Number of errors since last valid response
@@ -120,26 +121,45 @@ class dht_location
 	friend class dht_bucket;
 public:
 	// Make a new DHT location
-	dht_location(dht& dht, const node_id& tid);
+	dht_location(dht& dht, const node_id& tid, bool publish);
 	// Handle a new node being found
 	void on_node(const udp_endpoint& addr, const node_id& nid);
 	// Print the current state
 	void print() const;
+	// Get current node list
+	std::map<udp_endpoint, int> get_peers() const; 
 
 private:
+	struct peer_info 
+	{
+		peer_info() : pending(false) {}
+		bool pending;
+		time_point when;
+		std::set<udp_endpoint> what;
+	};
+
 	void start_timer();
 	void on_timer();
 	void send_bootstrap(const udp_endpoint& ep);
 	void on_bootstrap(be_map& resp);
-	void on_good_node(const dht_node_ptr& p);
+	void on_ready();
+	void on_good_up(dht_node_ptr p);
+	void on_good_down(dht_node_ptr p);
+	void send_get_peers(dht_node_ptr p);
+	void on_get_peers(dht_node_ptr p, be_map& m);
+	void on_error(dht_node_ptr p);
+	void on_peer_timer();
 
 	dht& m_dht;
 	node_id m_tid;
+	bool m_publish;
 	timer_id m_send_timer;
 	std::vector<dht_bucket> m_buckets;
 	size_t m_node_count;
 	time_point m_last_bootstrap;
 	bool m_is_ready;
+	std::map<dht_node_ptr, peer_info> m_good;
+	timer_id m_peer_timer;
 };
 
 class dht

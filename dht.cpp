@@ -2,13 +2,15 @@
 #include "dht.h"
 #include "utils.h"
 
-static const auto k_send_delay = 100_ms;
+static const auto k_send_delay = 20_ms;
 static const auto k_min_bootstrap_delay = 1000_ms;
 static const auto k_request_timeout = 3000_ms;
 static const auto k_good_time_min = 1_min;
 static const auto k_good_time_slop = 15_min;
 static const size_t k_goal_nodes = 6;
 static const size_t k_max_nodes = 40;
+static const size_t k_top_good = 10;
+static const auto k_peer_delay = 5_sec;
 
 node_id::node_id(const char* buf)
 {
@@ -97,7 +99,7 @@ void dht_rpc::send_request(const udp_endpoint& who, const std::string& rtype, co
 	do {
 		*((uint32_t *) tx_id.data()) = random();
 	} while(m_pending.count(tx_id));
-	LOG_DEBUG("Sending tx_id = %x", *((uint32_t *) tx_id.data()));
+	//LOG_DEBUG("Sending tx_id = %x", *((uint32_t *) tx_id.data()));
 	// Add it to pending, with proper data
 	pending_t& pend = m_pending[tx_id];
 	pend.who = who;
@@ -133,10 +135,10 @@ bool dht_rpc::on_incoming(const udp_endpoint& who, const char* buf, size_t len)
 			on_response(who, type, m);
 			return true;
 		}
-		LOG_DEBUG("Packet invalid type field: %s", type.c_str());
+		//LOG_DEBUG("Packet invalid type field: %s", type.c_str());
 	} catch(const std::exception& e) {
 		// Ignore
-		LOG_DEBUG("Invalid incoming results:\n%s", hexdump(std::string(buf, len)).c_str());
+		//LOG_DEBUG("Invalid incoming results:\n%s", hexdump(std::string(buf, len)).c_str());
 	}
 	return true;
 }
@@ -172,7 +174,7 @@ void dht_rpc::on_response(const udp_endpoint& who, const std::string& type, be_m
 	// Get tx_id + args
 	std::string tx_id = boost::get<std::string>(resp["t"]);
 	be_map args = boost::get<be_map>(resp["r"]);
-	LOG_DEBUG("Got tx_id = %x", *((uint32_t *) tx_id.data()));
+	//LOG_DEBUG("Got tx_id = %x", *((uint32_t *) tx_id.data()));
 	// Make sure it's in the table + from the proper source
 	runtime_assert(m_pending.count(tx_id));
 	pending_t p = m_pending[tx_id];
@@ -182,9 +184,11 @@ void dht_rpc::on_response(const udp_endpoint& who, const std::string& type, be_m
 	m_tm.cancel(p.timer);
 	if (type == "e" || !resp.count("r")) {
 		// Handle errors
+		/*
 		LOG_DEBUG("Node %s:%d, Failed due to a remote error: %s", 
 			p.who.address().to_string().c_str(), p.who.port(),
 			bencode(resp).c_str());
+		*/
 		p.on_failure();
 		return;
 	} 
@@ -194,17 +198,20 @@ void dht_rpc::on_response(const udp_endpoint& who, const std::string& type, be_m
 
 void dht_rpc::on_timeout(const std::string& tx_id)
 {
-	LOG_DEBUG("Timeout tx_id = %x", *((uint32_t *) tx_id.data()));
+	//LOG_DEBUG("Timeout tx_id = %x", *((uint32_t *) tx_id.data()));
 	pending_t p = m_pending[tx_id];
 	m_pending.erase(tx_id);
+	/*
 	LOG_DEBUG("Node %s:%d, Failed due to a timeout", 
 		p.who.address().to_string().c_str(), p.who.port());
+	*/
 	p.on_failure();
 }
 
-dht_node::dht_node(const udp_endpoint& addr, const node_id& nid)
-	: addr(addr)
-	, nid(nid)
+dht_node::dht_node(const udp_endpoint& _addr, const node_id& _nid, int _depth)
+	: addr(_addr)
+	, nid(_nid)
+	, depth(_depth)
 	, rand_key(random())
 	, responses(0)
 	, errors(0)
@@ -213,6 +220,9 @@ dht_node::dht_node(const udp_endpoint& addr, const node_id& nid)
 
 bool operator<(const dht_node_ptr& a, const dht_node_ptr& b)
 {
+	if (a->depth != b->depth) {
+		return b->depth < a->depth;
+	}
 	if (a->responses != b->responses) {
 		return b->responses < a->responses;
 	}
@@ -234,7 +244,7 @@ void dht_bucket::on_node(const udp_endpoint& addr, const node_id& nid)
 	if (m_all.count(addr)) {
 		return;
 	}
-	dht_node_ptr p = std::make_shared<dht_node>(addr, nid);
+	dht_node_ptr p = std::make_shared<dht_node>(addr, nid, m_depth);
 	m_all[p->addr] = p;
 	m_potential.insert(p);
 	if (m_all.size() > k_max_nodes) {
@@ -256,11 +266,13 @@ bool dht_bucket::try_send()
 	m_pending++;
 	be_map params = {
 		{ "id" , m_location.m_dht.m_nid.pack() },
-		{ "target" , m_location.m_tid.randomize(m_depth + 4).pack() },
+		{ "target" , m_location.m_tid.randomize(m_depth + 7).pack() },
 	};
+	/*
 	LOG_DEBUG("Sending a request to %s:%d, responses=%d, errors=%d", 
 		p->addr.address().to_string().c_str(),
 		p->addr.port(), (int) p->responses, (int) p->errors);
+	*/
 	m_location.m_dht.m_rpc.send_request(p->addr, "get", params,
 		[this, p](be_map& m) { on_get_success(p, m); },
 		[this, p]() { on_failure(p); }
@@ -311,7 +323,7 @@ void dht_bucket::on_get_success(const dht_node_ptr& p, be_map& resp)
 			on_good_timeout(p);
 		});
 	m_good.insert(p);
-	m_location.on_good_node(p);
+	m_location.on_good_up(p);
 }
 
 void dht_bucket::on_failure(const dht_node_ptr& p)
@@ -331,13 +343,15 @@ void dht_bucket::on_good_timeout(const dht_node_ptr& p)
 {
 	p->stale_timer = 0;
 	m_good.erase(p);
+	m_location.on_good_down(p);
 	m_potential.insert(p);
 	m_location.start_timer();
 }
 
-dht_location::dht_location(dht& dht, const node_id& tid)
+dht_location::dht_location(dht& dht, const node_id& tid, bool publish)
 	: m_dht(dht)
 	, m_tid(tid)
+	, m_publish(true)
 	, m_send_timer(0)
 	, m_node_count(0)
 	, m_is_ready(false)
@@ -372,6 +386,17 @@ void dht_location::print() const
 	}
 }
 
+std::map<udp_endpoint, int> dht_location::get_peers() const
+{
+	std::map<udp_endpoint, int> r;
+	for(const auto& kvp : m_good) {
+		for(const auto& ep : kvp.second.what) {
+			r[ep]++;
+		}
+	}
+	return r;
+}
+
 void dht_location::start_timer()
 {
 	if (m_send_timer == 0) {
@@ -389,6 +414,7 @@ void dht_location::on_timer()
 			break;
 		}
 	}
+	
 	if (!sent) {
 		for(int i = 159; i >= 0; i--) {
 			if (m_buckets[i].try_send()) {
@@ -405,11 +431,10 @@ void dht_location::on_timer()
 	}
 	if (sent) {
 		m_send_timer = m_dht.m_tm.add(now() + k_send_delay, [this]() { on_timer(); });
-	} else {
-		if (m_is_ready == false && m_node_count > 6*15) {
-			m_is_ready = true;
-			print();
-		}
+		return;
+	}
+	if (m_is_ready == false && m_good.size() > k_top_good / 2 + 1) {
+		on_ready();
 	}
 }
 
@@ -438,8 +463,147 @@ void dht_location::on_bootstrap(be_map& resp)
 	}
 }
 
-void dht_location::on_good_node(const dht_node_ptr& p)
+void dht_location::on_ready()
 {
+	m_is_ready = true;
+	size_t i = 0;
+	for(const auto& p : m_good) {
+		if (++i == k_top_good) {
+			break;
+		}
+		send_get_peers(p.first);
+	}
+	m_peer_timer = m_dht.m_tm.add(now() + k_peer_delay,
+		[this]() { on_peer_timer(); });
+}
+
+void dht_location::on_good_up(dht_node_ptr p) 
+{
+	m_good[p];
+	if (!m_is_ready) return;
+	size_t i = 0;
+	for(const auto& kvp : m_good) {
+		if (++i == k_top_good) break;
+		if (kvp.first == p) {
+			send_get_peers(p);
+			return;
+		}
+	}
+}
+
+void dht_location::on_good_down(dht_node_ptr p) 
+{
+	m_good.erase(p);
+	LOG_DEBUG("Removing good, count = %d", (int) m_good.size());
+}
+
+void dht_location::send_get_peers(dht_node_ptr p)
+{
+	LOG_DEBUG("Sending to: %d:%s:%d:%s", 
+			p->depth,
+			p->addr.address().to_string().c_str(),
+			p->addr.port(),
+			p->nid.to_string().c_str());
+
+	m_good[p].pending = true;
+
+	be_map params = {
+		{ "id" , m_dht.m_nid.pack() },
+		{ "info_hash" , m_tid.pack() },
+	};
+	m_dht.m_rpc.send_request(p->addr, "get_peers", params,
+		[this, p](be_map& m) { on_get_peers(p, m); },
+		[this, p]() { on_error(p); }
+	);
+}
+
+void dht_location::on_get_peers(dht_node_ptr p, be_map& resp)
+{
+	if (!m_good.count(p)) {
+		LOG_DEBUG("Hmm, looks like I gave up on a peer");
+	}
+	std::string token;
+	std::set<udp_endpoint> peers;
+	try {
+		token = boost::get<std::string>(resp["token"]);
+		if (resp.count("values")) {
+			bencode_t vals = resp["values"]; 
+			if (boost::get<std::string>(&vals)) {
+				std::string peer_str = boost::get<std::string>(vals);
+				if (peer_str.size() % 6 != 0) {
+					throw std::runtime_error("String values not % 6");
+				}
+				for(size_t i = 0; i < peer_str.size() / 6; i++) {
+					uint32_t ip = ntohl(*((uint32_t*) (peer_str.data() + i*6)));
+					uint16_t port = ntohs(*((uint16_t*) (peer_str.data() + i*6 + 4)));
+					boost::asio::ip::address_v4 bip(ip);
+					peers.emplace(bip, port);
+				}
+			} else if (boost::get<be_vec>(&vals)) {
+				be_vec peer_vec = boost::get<be_vec>(vals);
+				for(size_t i = 0; i < peer_vec.size(); i++) {
+					std::string peer = boost::get<std::string>(peer_vec[i]);
+					uint32_t ip = ntohl(*((uint32_t*) (peer.data())));
+					uint16_t port = ntohs(*((uint16_t*) (peer.data() + 4)));
+					boost::asio::ip::address_v4 bip(ip);
+					peers.emplace(bip, port);
+				}
+			} else {
+				throw std::runtime_error("Values not a string or list");
+			}
+		}
+	} catch(const std::exception& e) {
+		on_error(p);
+		return;
+	}
+	peer_info& pi = m_good[p];
+	pi.pending = false;
+	pi.when = now();
+	pi.what = peers;
+	LOG_DEBUG("Got %d peers, token = %s", (int) peers.size(), token.c_str());
+	if (m_publish) {
+		be_map params = {
+			{ "id" , m_dht.m_nid.pack() },
+			{ "info_hash" , m_tid.pack() },
+			{ "port", 6881 },
+			{ "implied_port", 1},
+			{ "token", token },
+		};
+		m_dht.m_rpc.send_request(p->addr, "announce_peer", params,
+			[this, p](be_map& m) { LOG_DEBUG("Announce good"); },
+			[this, p]() { LOG_DEBUG("Announce failed"); });
+	}
+}
+
+void dht_location::on_error(dht_node_ptr p)
+{
+	LOG_DEBUG("Ignoring failure return");
+	if (!m_good.count(p)) {
+		return;
+	}
+	peer_info& pi = m_good[p];
+	pi.pending = false;
+	pi.when = now();
+}
+
+void dht_location::on_peer_timer()
+{
+	dht_node_ptr which;
+	time_point oldest = now();
+	size_t i = 0;
+	for(const auto& kvp : m_good) {
+		if (++i == k_top_good) break;
+		if (kvp.second.pending) continue;
+		if (kvp.second.when < oldest) {
+			oldest = kvp.second.when;
+			which = kvp.first;
+		}
+	}
+	if (which) {
+		send_get_peers(which);
+	}
+	m_peer_timer = m_dht.m_tm.add(now() + k_peer_delay,
+		[this]() { on_peer_timer(); });
 }
 
 dht::dht(timer_mgr& tm, udp_port& udp, const node_id& nid)
@@ -474,6 +638,18 @@ void dht::print() const
 	}
 }
 
+void print_peers_timer(timer_mgr& tm, const dht_location& loc)
+{
+	printf("***** PEERS ****\n");
+	for(const auto& kvp : loc.get_peers()) {
+		printf("   %s:%d -> %d\n", 
+			kvp.first.address().to_string().c_str(),
+			kvp.first.port(),
+			kvp.second);
+	}
+	tm.add(now() + 5_sec, [&]() { print_peers_timer(tm, loc); });
+}
+
 int main()
 {
 	io_service ios;
@@ -487,16 +663,9 @@ int main()
 	the_dht.add_bootstrap(udp_resolve(ios, "router.utorrent.com", "6881"));
 	the_dht.add_bootstrap(udp_resolve(ios, "router.bittorrent.com", "6881"));
 	
-	dht_location loc(the_dht, node_id("112233445566778899"));
+	dht_location loc(the_dht, node_id("112233445566778899"), true);
 
-	/*	
-	for(size_t i = 1; i <= 5; i++) {
-		tm.add(now() + i * 10_sec, [&the_dht]() {
-			printf("***** DOING the print ******\n");
-			the_dht.print();
-		});
-	}
-	*/
+	print_peers_timer(tm, loc);
 
 	ios.run();
 
