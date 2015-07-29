@@ -5,7 +5,7 @@
 static const auto k_send_delay = 20_ms;
 static const auto k_min_bootstrap_delay = 1000_ms;
 static const auto k_request_timeout = 3000_ms;
-static const auto k_good_time_min = 1_min;
+static const auto k_good_time_min = 5_min;
 static const auto k_good_time_slop = 15_min;
 static const size_t k_goal_nodes = 6;
 static const size_t k_max_nodes = 40;
@@ -465,7 +465,6 @@ void dht_location::on_bootstrap(be_map& resp)
 
 void dht_location::on_ready()
 {
-	print();
 	m_is_ready = true;
 	size_t i = 0;
 	for(const auto& p : m_good) {
@@ -561,7 +560,7 @@ void dht_location::on_get_peers(dht_node_ptr p, be_map& resp)
 	pi.pending = false;
 	pi.when = now();
 	pi.what = peers;
-	LOG_DEBUG("Got %d peers, token = %s", (int) peers.size(), token.c_str());
+	LOG_DEBUG("Got %d peers, token = %s", (int) peers.size(), hexdump(token).c_str());
 	if (m_publish) {
 		be_map params = {
 			{ "id" , m_dht.m_nid.pack() },
@@ -664,7 +663,7 @@ int main()
 	the_dht.add_bootstrap(udp_resolve(ios, "router.utorrent.com", "6881"));
 	the_dht.add_bootstrap(udp_resolve(ios, "router.bittorrent.com", "6881"));
 	
-	dht_location loc(the_dht, node_id("112233445566778899"), true);
+	dht_location loc(the_dht, node_id("00112233445566778899"), true);
 
 	print_peers_timer(tm, loc);
 
