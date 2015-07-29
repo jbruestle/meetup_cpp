@@ -77,7 +77,10 @@ struct dht_node
 };
 typedef std::shared_ptr<dht_node> dht_node_ptr;
 
-bool operator<(const dht_node_ptr& a, const dht_node_ptr& b);
+class ptr_less {
+public:
+	bool operator()(const dht_node_ptr& a, const dht_node_ptr& b) const;
+};
 
 class dht_location;
 
@@ -107,9 +110,9 @@ private:
 	// All nodes by endpoint address
 	std::map<udp_endpoint, dht_node_ptr> m_all;
 	// Nodes which are currently good, ordered by total responses
-	std::set<dht_node_ptr> m_good;
+	std::set<dht_node_ptr, ptr_less> m_good;
 	// Nodes which are we have never heard from, or not in a while, ordered by total responses
-	std::set<dht_node_ptr> m_potential;
+	std::set<dht_node_ptr, ptr_less> m_potential;
 	// Number of nodes with pending requests of some sort (in neither map)
 	size_t m_pending;
 };
@@ -158,7 +161,7 @@ private:
 	size_t m_node_count;
 	time_point m_last_bootstrap;
 	bool m_is_ready;
-	std::map<dht_node_ptr, peer_info> m_good;
+	std::map<dht_node_ptr, peer_info, ptr_less> m_good;
 	timer_id m_peer_timer;
 };
 

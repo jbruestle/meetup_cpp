@@ -218,7 +218,7 @@ dht_node::dht_node(const udp_endpoint& _addr, const node_id& _nid, int _depth)
 	, stale_timer(0)
 {}
 
-bool operator<(const dht_node_ptr& a, const dht_node_ptr& b)
+bool ptr_less::operator()(const dht_node_ptr& a, const dht_node_ptr& b) const
 {
 	if (a->depth != b->depth) {
 		return b->depth < a->depth;
@@ -465,6 +465,7 @@ void dht_location::on_bootstrap(be_map& resp)
 
 void dht_location::on_ready()
 {
+	print();
 	m_is_ready = true;
 	size_t i = 0;
 	for(const auto& p : m_good) {
