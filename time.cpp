@@ -12,7 +12,7 @@ timer_id timer_mgr::add(const time_point& when, const std::function<void ()>& on
 	timer_id id = m_next_id++;
 	auto timer = std::make_shared<deadline_timer_t>(m_ios, when);
 	auto it = m_timers.emplace(id, timer).first;
-	it->second->async_wait([=](const boost::system::error_code& error) {
+	it->second->async_wait([=](const error_code& error) {
 		if (m_timers.count(id)) {
 			on_timeout();
 		}

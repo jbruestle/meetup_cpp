@@ -3,23 +3,12 @@
 
 #include "types.h"
 
-typedef boost::asio::ip::udp::endpoint udp_endpoint;
-typedef boost::asio::ip::tcp::endpoint tcp_endpoint;
 typedef std::function<bool (const udp_endpoint& src, const char* buf, size_t len)> protocol_hander_t; 
 
-inline udp_endpoint udp_resolve(io_service& ios, const std::string& ip, const std::string& port) {
-	boost::asio::ip::udp::resolver resolver(ios);
-	boost::asio::ip::udp::resolver::query query(boost::asio::ip::udp::v4(), ip, port);
-	boost::asio::ip::udp::resolver::iterator it = resolver.resolve(query);
-	return *it;
-}
-
-inline tcp_endpoint tcp_resolve(io_service& ios, const std::string& ip, const std::string& port) {
-	boost::asio::ip::tcp::resolver resolver(ios);
-	boost::asio::ip::tcp::resolver::query query(boost::asio::ip::tcp::v4(), ip, port);
-	boost::asio::ip::tcp::resolver::iterator it = resolver.resolve(query);
-	return *it;
-}
+// Helper functions
+udp_endpoint udp_resolve(io_service& ios, const std::string& ip, const std::string& port);
+tcp_endpoint tcp_resolve(io_service& ios, const std::string& ip, const std::string& port);
+std::string to_string(const udp_endpoint& ep);
 
 class udp_port
 {
@@ -34,7 +23,7 @@ public:
 
 private:
 	void start_recv();
-	void on_recv(const boost::system::error_code& error, size_t size);
+	void on_recv(const error_code& error, size_t size);
 
 	boost::asio::ip::udp::socket m_socket;
 	udp_endpoint m_endpoint;

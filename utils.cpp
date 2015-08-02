@@ -2,6 +2,28 @@
 #include <sstream>
 #include <iomanip>
 
+static const char* digits = "0123456789ABCDEF";
+
+std::string cleanify(const std::string& input) {
+	std::string out = input;
+	for(char& c : out) {
+		if (c < 32 || c > 127) {
+			c = '.';
+		}
+	}
+	return out;
+}
+
+std::string hexify(const std::string& input) {
+	std::string out;
+	for(uint8_t c : input) {
+		out += digits[c >> 4];
+		out += digits[c & 0xf];
+	}
+	return out;
+}
+
+// TODO: Where did I get this hexdump?
 std::string hexdump(const std::string& input)
 {
 	 std::istringstream is(input);

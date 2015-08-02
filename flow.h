@@ -26,10 +26,10 @@ private:
 	uint32_t m_value;
 };
 
-static const duration ACK_DELAY = 20_msec;
-static const duration MIN_RTO = 50_msec;
-static const duration MAX_RTO = 1000_msec;
-static const duration KEEP_ALIVE = 5000_msec;
+static const duration ACK_DELAY = 20_ms;
+static const duration MIN_RTO = 50_ms;
+static const duration MAX_RTO = 1000_ms;
+static const duration KEEP_ALIVE = 5000_ms;
 static const size_t WINDOW = 1024*1024;
 static const size_t MSS = 1024;
 
@@ -43,12 +43,12 @@ public:
 	// need to generate an ACK immediately
 	void on_packet(seq_t seq, timestamp_t stamp, const char* data, size_t len);
 	// Check error code
-	const boost::system::error_code& get_error() const { return m_err; }
+	const error_code& get_error() const { return m_err; }
 private:
 	// Start a write
 	void start_write();	
 	// Write complete
-	void write_complete(const boost::system::error_code& err, size_t len);
+	void write_complete(const error_code& err, size_t len);
 	// Send an ACK now
 	void send_now(timestamp_t stamp);
 	// Set ACK timer
@@ -62,7 +62,7 @@ private:
 	// Is there a write currently pending
 	bool m_write_pending;
 	// Error state
-	boost::system::error_code m_err;
+	error_code m_err;
 	// Current ack seq number
 	seq_t m_ack_seq;
 	// Current 'head' of unwritten data
@@ -82,12 +82,12 @@ public:
 	// Called when an ACK packet arrives
 	void on_ack(seq_t ack, size_t window, const duration* rtt);
 	// Check error code
-	const boost::system::error_code& get_error() const { return m_err; }
+	const error_code& get_error() const { return m_err; }
 private:
 	// Start a read
 	void start_read();	
 	// read complete
-	void read_complete(const boost::system::error_code& err, size_t len);
+	void read_complete(const error_code& err, size_t len);
 	// Call to handle a hard timeout
 	void on_timeout();
 	// Start a timer if needed
@@ -110,7 +110,7 @@ private:
 	// Is a read from source pending
 	bool m_read_pending;
 	// Error state
-	boost::system::error_code m_err;
+	error_code m_err;
 	// Highest sequence send + 1
 	seq_t m_send_seq;
 	// Highest sequence acked

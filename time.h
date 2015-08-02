@@ -53,6 +53,8 @@ public:
 	timer_id add(const time_point& when, const std::function<void ()>& on_timeout);
 	// Support strong cancellation, since we are single threaded
 	void cancel(const timer_id& id);
+	// Return a copy of the IOS
+	io_service& get_ios() { return m_ios; }
 private:
 	io_service& m_ios;
 	timer_id m_next_id;

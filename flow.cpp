@@ -3,6 +3,8 @@
 #include "time.h"
 #include <stdio.h>
 
+#define LOG_TOPIC LT_FLOW
+
 flow_recv::flow_recv(timer_mgr& tm, tcp_socket& sink, const send_func_t& do_send)
 	: m_tm(tm)
 	, m_sink(sink)
@@ -77,13 +79,13 @@ void flow_recv::start_write()
 	LOG_DEBUG("   starting write: head_seq = %u, len = %u", uint32_t(m_head_seq), uint32_t(len));
 	m_write_pending = true;
 	m_sink.async_write_some(boost::asio::buffer(buf, len),
-		[this](const boost::system::error_code& err, size_t len) {
+		[this](const error_code& err, size_t len) {
 			write_complete(err, len);
 		}
 	);
 }
 
-void flow_recv::write_complete(const boost::system::error_code& err, size_t len)
+void flow_recv::write_complete(const error_code& err, size_t len)
 {
 	m_write_pending = false;
 	if (err) {
@@ -234,12 +236,12 @@ void flow_send::start_read()
 	}
 	m_read_pending = true;
 	m_source.async_read_some(boost::asio::buffer(m_read_buf, MSS), 
-		[this](const boost::system::error_code& err, size_t len) {
+		[this](const error_code& err, size_t len) {
 			read_complete(err, len);
 		});
 }
 
-void flow_send::read_complete(const boost::system::error_code& err, size_t len)
+void flow_send::read_complete(const error_code& err, size_t len)
 {
 	m_read_pending = false;
 	if (err) {

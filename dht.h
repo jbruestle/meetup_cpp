@@ -7,23 +7,27 @@
 #include <set>
 #include <boost/operators.hpp>
 
-class node_id : boost::totally_ordered<node_id> { 
-public:
-	// Construct a node-id from raw data
-	explicit node_id(const char* buf);
+class hash_id : boost::totally_ordered<hash_id> { 
+public:	
+	// Return a random ID
+	static hash_id random();
+	// Construct a node-id based on the hash of some data
+	explicit hash_id(const std::string& data);
+	// Make a hash from ip address
+	explicit hash_id(const ip_address& ip);
 	// Back to std::string for packing up
 	std::string pack() const;
 	// Human readable std::string for printing
 	std::string to_string() const;
 	// Compute # of shared bits
-	size_t shared_bits(const node_id& rhs) const;
+	size_t shared_bits(const hash_id& rhs) const;
 	// Randomize lower bits to increase privacy + search breadth
-	node_id randomize(size_t depth) const;
+	hash_id randomize(size_t depth) const;
 	// Ordering
-	bool operator<(const node_id& rhs) const;
-	bool operator==(const node_id& rhs) const;
+	bool operator<(const hash_id& rhs) const;
+	bool operator==(const hash_id& rhs) const;
 private:
-	node_id() {}
+	hash_id() {}
 	unsigned char m_buf[20];
 };
 
@@ -34,7 +38,7 @@ class dht_rpc
 {
 public:
 	// Called when a query succeeds
-	typedef std::function<void (be_map&)> success_handler_t;
+	typedef std::function<void (be_map&, be_map&)> success_handler_t;
 	// Called when a query fails
 	typedef std::function<void ()> failure_handler_t;
 	// Called for inbound queries
@@ -55,6 +59,7 @@ private:
 	udp_port& m_udp;
 	struct pending_t {
 		udp_endpoint who;
+		std::string qtype;
 		success_handler_t on_success;
 		failure_handler_t on_failure;
 		timer_id timer;
@@ -65,10 +70,10 @@ private:
 
 struct dht_node
 {
-	dht_node(const udp_endpoint& addr, const node_id& nid, int depth);
+	dht_node(const udp_endpoint& addr, const hash_id& nid, int depth);
 
 	udp_endpoint addr;
-	node_id nid;
+	hash_id nid;
 	int depth;
 	uint32_t rand_key;
 	uint32_t responses;  // Total number of responses
@@ -90,7 +95,7 @@ public:
 	// Construct a new bucket
 	dht_bucket(dht_location& location, size_t depth);
 	// Heard about a node
-	void on_node(const udp_endpoint& addr, const node_id& nid);
+	void on_node(const udp_endpoint& addr, const hash_id& nid);
 	// Try to get closer to my location, return if I sent a packet
 	bool try_send();
 	// Check if this bucket really needs nodes
@@ -124,9 +129,9 @@ class dht_location
 	friend class dht_bucket;
 public:
 	// Make a new DHT location
-	dht_location(dht& dht, const node_id& tid, bool publish);
+	dht_location(dht& dht, const hash_id& tid, bool publish);
 	// Handle a new node being found
-	void on_node(const udp_endpoint& addr, const node_id& nid);
+	void on_node(const udp_endpoint& addr, const hash_id& nid);
 	// Print the current state
 	void print() const;
 	// Get current node list
@@ -154,7 +159,7 @@ private:
 	void on_peer_timer();
 
 	dht& m_dht;
-	node_id m_tid;
+	hash_id m_tid;
 	bool m_publish;
 	timer_id m_send_timer;
 	std::vector<dht_bucket> m_buckets;
@@ -165,22 +170,59 @@ private:
 	timer_id m_peer_timer;
 };
 
+struct dht_bootstrap_node {
+public:
+	dht_bootstrap_node(dht& dht, const std::string& name, uint16_t port);
+	bool is_ready() { return m_ready; }
+	const ip_address& external_addr() { return m_external; }
+	const udp_endpoint& endpoint() { return m_endpoint; }
+
+private:
+	void send_resolve();
+	void resolve_done(const error_code& ec, udp_resolver::iterator it);
+	void send_ping();
+	void on_ping_resp(be_map& b);
+	void on_ping_fail();
+
+	dht& m_dht;
+	std::string m_name;
+	uint16_t m_port;
+	bool m_ready;
+	udp_endpoint m_endpoint;
+	ip_address m_external;
+	udp_resolver m_resolver;
+	timer_id m_timer;
+	time_point m_last_ping;
+	duration m_timeout;
+	int m_fail_count;
+};
+
 class dht
 {
 	friend class dht_bucket;
 	friend class dht_location;
+	friend class dht_bootstrap_node;
 public:
-	dht(timer_mgr& tm, udp_port& udp, const node_id& nid);
-	void add_bootstrap(const udp_endpoint& ep);
-	void print() const;
+	dht(timer_mgr& tm, udp_port& udp, const std::string& url);
+	void add_bootstrap(const std::string& name, uint16_t port);
 
 private:
+	void try_external();
 	void process_nodes(const std::string& nodes);
+	std::vector<udp_endpoint> get_bootstraps();
+	void bootstrap_state_change();
+	void bootstrap_up(const ip_address&);
+	void bootstrap_down();
 
 	timer_mgr& m_tm;
 	dht_rpc m_rpc;
-	node_id m_nid;
-	std::vector<udp_endpoint> m_bootstraps;
-	std::set<dht_location*> m_locations;
+	bool m_has_external;
+	ip_address m_external;
+	bool m_ready;
+	hash_id m_network;
+	hash_id m_nid;
+	std::vector<std::shared_ptr<dht_bootstrap_node>> m_bootstraps;
+	std::shared_ptr<dht_location> m_register;
+	std::shared_ptr<dht_location> m_incoming;
 };
 

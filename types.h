@@ -6,24 +6,18 @@
 #include <exception>
 #include <functional>
 #include <boost/asio.hpp>
+#include "log.h"
 
 typedef boost::asio::io_service io_service;
-
-#define LL_DEBUG  0
-#define LL_INFO   1
-#define LL_WARN   2  
-#define LL_ERROR  3
-
-// TODO: Make this not ignore level
-#define LOG(level, format, ...) fprintf(stderr, format "\n", ##__VA_ARGS__)
-
-#define LOG_DEBUG(format, ...) LOG(LL_DEBUG, format, ##__VA_ARGS__)
-#define LOG_INFO(format, ...) LOG(LL_INFO, format, ##__VA_ARGS__)
-#define LOG_WARN(format, ...) LOG(LL_WARN, format, ##__VA_ARGS__)
-#define LOG_ERROR(format, ...) LOG(LL_ERROR, format, ##__VA_ARGS__)
+typedef boost::system::error_code error_code;
+typedef boost::asio::ip::address ip_address;
+typedef boost::asio::ip::address_v4 ip_address_v4;
+typedef boost::asio::ip::address_v6 ip_address_v6;
+typedef boost::asio::ip::udp::endpoint udp_endpoint;
+typedef boost::asio::ip::tcp::endpoint tcp_endpoint;
+typedef boost::asio::ip::udp::resolver udp_resolver;
 
 #define FATAL(format, ...) do { LOG_ERROR(format, ##__VA_ARGS__); exit(1); } while(0)
-
 #define runtime_assert(COND) do { if (!(COND)) { throw std::runtime_error(#COND); }} while(0)
 
 
