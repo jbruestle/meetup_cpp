@@ -23,7 +23,6 @@ meetup::meetup(const std::string& where, uint16_t local_port)
         m_dht.add_bootstrap("dht.transmissionbt.com", 6881);
         m_dht.add_bootstrap("router.utorrent.com", 6881);
         m_dht.add_bootstrap("router.bittorrent.com", 6881);
-	m_ios.run();
 	m_udp.add_protocol([this](const udp_endpoint& src, const char* buf, size_t len) -> bool {
 		if (len == 5 && memcmp(buf, "HELLO", 5) == 0) {
 			LOG_INFO("Got hello from %s", to_string(src).c_str());
@@ -35,6 +34,7 @@ meetup::meetup(const std::string& where, uint16_t local_port)
 
 void meetup::run() 
 {
+	LOG_INFO("Running");
 	m_ios.run();
 }
 
