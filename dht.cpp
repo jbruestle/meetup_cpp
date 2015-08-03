@@ -601,7 +601,7 @@ void dht_location::on_timer()
 	}
 	bool is_valid = valid_levels >= 3 && valid_nodes >= 10 && bottom_level > 15;
 	if (m_is_ready == false && is_valid) {
-		print();
+		//print();
 		on_ready();
 	}
 }
@@ -641,7 +641,9 @@ void dht_location::on_ready()
 	m_is_ready = true;
 	m_peer_timer = m_dht.m_tm.add(now() + m_peer_delay,
 		[this]() { on_peer_timer(); });
-	m_on_ready();
+	if (m_on_ready) {
+		m_on_ready();
+	}
 }
 
 void dht_location::on_good_up(dht_node_ptr p) 
@@ -706,6 +708,7 @@ void dht_location::on_get_peers(dht_node_ptr p, be_map& resp)
 					uint32_t ip = ntohl(*((uint32_t*) (peer_str.data() + i*6)));
 					uint16_t port = ntohs(*((uint16_t*) (peer_str.data() + i*6 + 4)));
 					ip_address_v4 bip(ip);
+					if (bip == m_dht.m_external) { continue; }
 					peers.emplace(bip, port);
 				}
 			} else if (boost::get<be_vec>(&vals)) {
@@ -715,6 +718,7 @@ void dht_location::on_get_peers(dht_node_ptr p, be_map& resp)
 					uint32_t ip = ntohl(*((uint32_t*) (peer.data())));
 					uint16_t port = ntohs(*((uint16_t*) (peer.data() + 4)));
 					ip_address_v4 bip(ip);
+					if (bip == m_dht.m_external) { continue; }
 					peers.emplace(bip, port);
 				}
 			} else {
@@ -940,6 +944,9 @@ void dht::process_nodes(const std::string& nodes)
 		ip_address_v4 bip(ip);
 		udp_endpoint ep(bip, port);
 		for(auto& kvp : m_locations) {
+			if (bip == m_external) {
+				continue;
+			}
 			kvp.second->on_node(ep, nid);
 		}
 	}
@@ -1007,6 +1014,7 @@ void dht::bootstrap_down()
 	m_on_state(false);
 }
 
+/*
 int main()
 {
 	g_log_level[LT_DHT] = LL_DEBUG;
@@ -1031,5 +1039,5 @@ int main()
 	
 	ios.run();
 }
-
+*/
 

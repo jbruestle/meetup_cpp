@@ -227,6 +227,7 @@ public:
 	void set_ready_handler(size_t which, const std::function<void()>& on_done);
 	std::map<udp_endpoint, int> check_query(size_t which);
 	void cancel_query(size_t which);
+	ip_address external() { return m_external; }
 
 private:
 	void try_external();
