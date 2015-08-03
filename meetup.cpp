@@ -24,6 +24,13 @@ meetup::meetup(const std::string& where, uint16_t local_port)
         m_dht.add_bootstrap("router.utorrent.com", 6881);
         m_dht.add_bootstrap("router.bittorrent.com", 6881);
 	m_ios.run();
+	m_udp.add_protocol([this](const udp_endpoint& src, const char* buf, size_t len) -> bool {
+		if (len == 5 && memcmp(buf, "HELLO", 5) == 0) {
+			LOG_INFO("Got hello from %s", to_string(src).c_str());
+			return true;
+		}
+		return false;
+	});
 }
 
 void meetup::run() 
@@ -56,8 +63,10 @@ void meetup::connect_timer()
 			m_outgoing_qid = m_dht.run_query(hash_id::hash_of(outgoing_str), true, 1_min);
 			m_dht.set_ready_handler(m_outgoing_qid, [this]() {
 				LOG_INFO("Finished search for %s", to_string(m_outgoing_addr).c_str());
-				m_dht.cancel_query(m_outgoing_qid);
+				size_t out_qid = m_outgoing_qid;
 				m_outgoing_qid = 0;
+				// This might destroy this lambda?
+				m_dht.cancel_query(out_qid);
 			});
 		} else {
 			LOG_INFO("No peers found for outbound");
