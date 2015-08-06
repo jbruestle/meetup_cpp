@@ -7,9 +7,10 @@
 #define LT_UDP    0
 #define LT_DHT    1 
 #define LT_FLOW   2
-#define LT_MAIN   3
+#define LT_STUN   3
+#define LT_MAIN   4
 
-#define LT_NUM_TOPICS 4
+#define LT_NUM_TOPICS 5
 
 #define LL_DEBUG  0
 #define LL_INFO   1
