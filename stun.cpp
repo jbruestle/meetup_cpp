@@ -5,30 +5,24 @@
 #define LOG_TOPIC LT_STUN
 
 static const uint32_t k_magic_cookie = 0x2112A442;
-static const duration k_stun_timeout = 3_sec;
-static const duration k_min_send_delay = 100_ms;
-static const duration k_max_send_delay = 1_min;
+static const duration k_stun_timeout = 2_sec;
+static const duration k_short_send_delay = 100_ms;
+static const duration k_long_send_delay = 30_sec;
 
 static const std::vector<std::pair<std::string, std::string>> k_public_stun = {
 	{ "stun.l.google.com", "19302" },
-	{ "stun01.sipphone.com", "3478" },
 	{ "stun.ekiga.net", "3478" },
 	{ "stun4.l.google.com", "19302" },
-	{ "stun.fwdnet.net", "3478" },
 	{ "stun.ideasip.com", "3478" },
 	{ "stun1.l.google.com", "19302" },
 	{ "stun.iptel.org", "3478" },
-	{ "stun.rixtelecom.se", "3478" },
 	{ "stun.schlund.de", "3478" },
 	{ "stun2.l.google.com", "19302" },
-	{ "stunserver.org", "3478" },
-	{ "stun.softjoys.com", "3478" },
 	{ "stun.voiparound.com", "3478" },
-	{ "stun3.l.google.com", "19302" },
 	{ "stun.voipbuster.com", "3478" },
+	{ "stun3.l.google.com", "19302" },
 	{ "stun.voipstunt.com", "3478" },
 	{ "stun.voxgratia.org", "3478" },
-	{ "stun.xten.com", "3478" },
 };
 
 struct stun_header
@@ -45,11 +39,9 @@ stun_mgr::stun_mgr(timer_mgr& tm, udp_port& udp, const state_handler_t& handler)
 	, m_handler(handler)
 	, m_state(state_down)
 	, m_resolver(tm.get_ios())
-	, m_last_state(state_down)
-	, m_count(1)
 	, m_timeout(0)
-	, m_send_delay(k_min_send_delay)
-	, m_next_server(random() % k_public_stun.size())
+	, m_next_server(0) //random() % k_public_stun.size())
+	, m_error_count(0)
 {
 	memset(m_tx_id, 0, 12);
 	m_udp.add_protocol([this](const udp_endpoint& src, const char* buf, size_t len) -> bool {
@@ -160,17 +152,98 @@ void stun_mgr::on_incoming(const udp_endpoint& who, const char* buf, size_t len)
 	m_tm.cancel(m_timeout);
 	m_timeout = 0;
 
-	LOG_DEBUG("GOT a result of %s", to_string(ep).c_str());
+	// Clear errors
+	m_error_count = 0;
+
+	// Now do the state update
+	if (m_samples.size() < 5) {
+		LOG_DEBUG("Adding to samples");
+		// Scanning, add samples
+		m_samples.push_back(ep);
+		if (m_samples.size() == 5) {
+			process_samples();
+		}
+	} else {
+		LOG_DEBUG("Checking for invalidation");
+		if (m_state == state_cone && ep != m_external) {
+			LOG_DEBUG("Invalidation due to cone mismatch");
+			// Get new samples on possible state change
+			m_samples.clear();
+		} else if (m_state == state_symmetric && ep.address() != m_external.address()) {
+			LOG_DEBUG("Invalidation due to IP mismatch");
+			// Get new samples on possible state change
+			m_samples.clear();
+		}
+	}
+	// Pick duration
+	duration wait_time = (m_samples.size() == 5 ? k_long_send_delay : k_short_send_delay);
+	m_timeout = m_tm.add(now() + wait_time, [this]() { m_timeout = 0; send_packet(); });
 }
 
 void stun_mgr::on_timeout()
 {
-	LOG_DEBUG("Whoa, stuff timed out");
 	// Zero myself out
 	m_timeout = 0;
 	// Either resolve or send timed out, kill resolve for safety
 	m_resolver.cancel();
+	// Update state goo
+	m_error_count++;
+	LOG_DEBUG("Timeout, error count = %lu", m_error_count);
+	if (m_error_count >= 5) {
+		if (m_state != state_down) {
+			LOG_DEBUG("Too many errors, going down");
+			m_samples.clear();
+			m_state = state_down;
+			m_external = udp_endpoint();
+			m_handler(m_state, m_external);
+		}
+	}
+	// Prep a new packet to send		
+	duration wait_time = (m_error_count >= 5 ? k_long_send_delay : k_short_send_delay);
+	m_timeout = m_tm.add(now() + wait_time, [this]() { m_timeout = 0; send_packet(); });
 }
+
+void stun_mgr::process_samples()
+{
+	LOG_DEBUG("Processing samples");
+	std::map<ip_address, size_t> by_ip;
+	std::map<udp_endpoint, size_t> by_ep;
+	for(const udp_endpoint& ep : m_samples) {
+		by_ip[ep.address()]++;
+		by_ep[ep]++;
+	}
+	bool ip_quorum = false;
+	bool ep_quorum = false;
+	udp_endpoint choice;
+	for(const auto& kvp : by_ip) {
+		if (kvp.second >= 3) {
+			ip_quorum = true;
+			choice = udp_endpoint(kvp.first, 0);
+		}
+	}
+	for(const auto& kvp : by_ep) {
+		if (kvp.second >= 3) {
+			ep_quorum = true;
+			choice = kvp.first;
+		}
+	}
+	LOG_DEBUG("ip_quorum = %d, ep_quorum = %d", ip_quorum, ep_quorum);
+	if (!ip_quorum) {
+		LOG_WARN("No agreement on external IP by STUN servers, this is strange");
+		// This shouldn't really happen, just stay in sample mode + try again
+		m_samples.clear();
+		return;
+	}
+	stun_state state = (ep_quorum ? state_cone : state_symmetric);
+	LOG_DEBUG("State = %d, choice = %s", state, to_string(choice).c_str());
+	if (state != m_state || m_external != choice) {
+		LOG_DEBUG("State differs, doing update");
+		m_state = state;
+		m_external = choice;
+		m_handler(m_state, m_external);
+	}
+}			
+
 
 int main() 
 {

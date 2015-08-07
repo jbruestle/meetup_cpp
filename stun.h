@@ -16,6 +16,7 @@ private:
 	void resolve_done(const error_code& ec, udp_resolver::iterator it);
 	void on_incoming(const udp_endpoint& who, const char* buf, size_t len);
 	void on_timeout();
+	void process_samples();
 	
 	timer_mgr& m_tm;
 	udp_port& m_udp;
@@ -24,10 +25,9 @@ private:
 	udp_endpoint m_external;
 	udp_resolver m_resolver;
 	uint8_t m_tx_id[12];
-	stun_state m_last_state;
-	size_t m_count; 
 	timer_id m_timeout;
-	duration m_send_delay;
 	size_t m_next_server;
+	size_t m_error_count;
+	std::vector<udp_endpoint> m_samples;
 };
 
