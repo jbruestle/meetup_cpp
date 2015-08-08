@@ -126,10 +126,11 @@ udp_endpoint meetup::pick_random(const std::map<udp_endpoint, int>& peers)
 	return peers.begin()->first;
 }
 
-int main()
+int main(int argc, char* argv[])
 {
 	try {
-		meetup m("Hello World", 1234);
+		runtime_assert(argc >= 2);
+		meetup m(argv[1], 1234);
 		m.run();
 	}
 	catch(const std::exception& e) {
