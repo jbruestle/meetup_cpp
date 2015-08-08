@@ -1,5 +1,6 @@
 
 #include "dht.h"
+#include "stun.h"
 
 class meetup
 {
@@ -8,7 +9,7 @@ public:
 	void run(); 
 
 private:
-	void on_dht_state(bool what);
+	void on_stun_state(stun_mgr::stun_state s, const udp_endpoint& ep);
 	void connect_timer();
 	void inbound_timer();
 	udp_endpoint pick_random(const std::map<udp_endpoint, int>& peers);
@@ -17,6 +18,7 @@ private:
 	io_service m_ios;
 	timer_mgr m_tm;
 	udp_port m_udp;
+	stun_mgr m_stun;
 	dht m_dht;
 	size_t m_group_qid;
 	size_t m_incoming_qid;

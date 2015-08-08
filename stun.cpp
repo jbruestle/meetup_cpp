@@ -244,7 +244,7 @@ void stun_mgr::process_samples()
 	}
 }			
 
-
+/*
 int main() 
 {
 	srandom(time(0));
@@ -257,5 +257,6 @@ int main()
 	});
 	ios.run();
 }
+*/
  
 

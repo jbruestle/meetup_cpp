@@ -476,10 +476,10 @@ void dht_bucket::on_good_timeout(const dht_node_ptr& p)
 	m_location.start_timer();
 }
 
-dht_location::dht_location(dht& dht, const hash_id& tid, bool publish, const duration& peer_delay)
+dht_location::dht_location(dht& dht, const hash_id& tid, const duration& peer_delay)
 	: m_dht(dht)
 	, m_tid(tid)
-	, m_publish(true)
+	, m_publish(false)
 	, m_peer_delay(peer_delay)
 	, m_send_timer(0)
 	, m_node_count(0)
@@ -490,7 +490,7 @@ dht_location::dht_location(dht& dht, const hash_id& tid, bool publish, const dur
 		m_buckets.emplace_back(*this, i);
 	}
 	start_timer();
-	std::vector<udp_endpoint> bootstraps = m_dht.get_bootstraps();
+	std::vector<udp_endpoint> bootstraps = m_dht.m_bootstraps;
 	for(const udp_endpoint& ep : bootstraps) {
 		send_bootstrap(ep);
 	}
@@ -505,6 +505,11 @@ dht_location::~dht_location()
 void dht_location::set_ready_handler(const std::function<void ()>& on_ready)
 {
 	m_on_ready = on_ready;
+}
+
+void dht_location::set_publish(bool publish)
+{
+	m_publish = publish;
 }
 
 void dht_location::on_node(const udp_endpoint& addr, const hash_id& nid)
@@ -590,7 +595,7 @@ void dht_location::on_timer()
 	LOG_DEBUG("Valid levels = %d, valid_nodes = %d, bottom_level = %d",
 		valid_levels, valid_nodes, bottom_level);
 	if (!sent && m_node_count < 100) {
-		std::vector<udp_endpoint> bootstraps = m_dht.get_bootstraps();
+		std::vector<udp_endpoint> bootstraps = m_dht.m_bootstraps;
 		if (now() - m_last_bootstrap > k_min_bootstrap_delay) {
 			send_bootstrap(bootstraps[random() % bootstraps.size()]);
 		} 
@@ -708,7 +713,7 @@ void dht_location::on_get_peers(dht_node_ptr p, be_map& resp)
 					uint32_t ip = ntohl(*((uint32_t*) (peer_str.data() + i*6)));
 					uint16_t port = ntohs(*((uint16_t*) (peer_str.data() + i*6 + 4)));
 					ip_address_v4 bip(ip);
-					if (bip == m_dht.m_external) { continue; }
+					if (bip == m_dht.m_external.address()) { continue; }
 					peers.emplace(bip, port);
 				}
 			} else if (boost::get<be_vec>(&vals)) {
@@ -718,7 +723,7 @@ void dht_location::on_get_peers(dht_node_ptr p, be_map& resp)
 					uint32_t ip = ntohl(*((uint32_t*) (peer.data())));
 					uint16_t port = ntohs(*((uint16_t*) (peer.data() + 4)));
 					ip_address_v4 bip(ip);
-					if (bip == m_dht.m_external) { continue; }
+					if (bip == m_dht.m_external.address()) { continue; }
 					peers.emplace(bip, port);
 				}
 			} else {
@@ -738,8 +743,7 @@ void dht_location::on_get_peers(dht_node_ptr p, be_map& resp)
 		be_map params = {
 			{ "id" , m_dht.m_nid.pack() },
 			{ "info_hash" , m_tid.pack() },
-			{ "port", 6881 },
-			{ "implied_port", 1},
+			{ "port", m_dht.m_external.port() },
 			{ "token", token },
 		};
 		m_pending.insert(
@@ -786,124 +790,30 @@ void dht_location::on_peer_timer()
 		[this]() { on_peer_timer(); });
 }
 
-dht_bootstrap_node::dht_bootstrap_node(dht& dht, const std::string& name, uint16_t port)
-	: m_dht(dht)
-	, m_name(name)
-	, m_port(port)
-	, m_ready(false)
-	, m_resolver(m_dht.m_tm.get_ios())
-	, m_timer(0)
-	, m_timeout(k_min_bootstrap_timeout)
-	, m_fail_count(0)
-{
-	send_resolve();
-}
-
-void dht_bootstrap_node::send_resolve()
-{
-	udp_resolver::query query(
-		boost::asio::ip::udp::v4(), 
-		m_name,
-		std::to_string(m_port)
-		);
-	m_resolver.async_resolve(query, [this](const error_code& ec, udp_resolver::iterator it) {
-		resolve_done(ec, it);
-	});
-	m_timer = m_dht.m_tm.add(now() + m_timeout, [this]() {
-		m_timer = 0;
-		m_resolver.cancel();
-		m_timeout = std::min(2 * m_timeout, k_max_bootstrap_timeout);
-		if (m_ready && ++m_fail_count == 3) {
-			m_ready = false;
-			m_dht.bootstrap_state_change();
-		}
-		send_resolve();
-	});
-}
-
-void dht_bootstrap_node::resolve_done(const error_code& ec, udp_resolver::iterator it)
-{
-	if (ec) {
-		return; // Timer will resend
-	}
-	m_dht.m_tm.cancel(m_timer);
-	m_timer = 0;
-	m_endpoint = *it;
-	send_ping();
-}
-
-void dht_bootstrap_node::send_ping()
-{
-	m_last_ping = now();
-        be_map params = {
-                { "id" , m_dht.m_nid.pack() },
-        };
-	m_dht.m_rpc.send_request(m_endpoint, "ping", params,
-                [this](const std::string& tx_id, be_map& m, be_map& b) { on_ping_resp(b); },
-                [this](const std::string& tx_id) { on_ping_fail(); }
-	);
-}
-
-void dht_bootstrap_node::on_ping_resp(be_map& b)
-{
-	try {
-		std::string ips = boost::get<std::string>(b["ip"]);
-		uint32_t ip = ntohl(*((uint32_t*) (ips.data())));
-		m_external = ip_address_v4(ip);
-		LOG_DEBUG("Got external address: %s", m_external.to_string().c_str());
-	} catch(const std::exception& e) {
-		LOG_DEBUG("Bootstrap node didn't return our external IP");
-		m_external = ip_address();
-	}
-	m_timeout = k_min_bootstrap_timeout;
-	m_timer = m_dht.m_tm.add(now() + k_bootstrap_check_timeout, [this]() {
-		m_timer = 0;
-		send_resolve();
-	});
-	if (!m_ready) {
-		m_ready = true;
-		m_fail_count = 0;
-		m_dht.bootstrap_state_change();
-	}
-}
-
-void dht_bootstrap_node::on_ping_fail() 
-{
-	LOG_DEBUG("Ping failed");
-	m_timeout = std::min(2 * m_timeout, k_max_bootstrap_timeout);
-	if (m_ready && ++m_fail_count == 3) {
-		m_ready = false;
-		m_dht.bootstrap_state_change();
-	}
-	m_dht.m_tm.add(now() + m_timeout, [this]() {
-		m_timer = 0;
-		send_resolve();
-	});
-}
-
 dht::dht(timer_mgr& tm, udp_port& udp)
 	: m_tm(tm)
 	, m_rpc(tm, udp)
-	, m_ready(false)
 	, m_nid(hash_id::random())
 	, m_next_query_id(1)
 {
 }
 
-void dht::set_state_handler(const state_handler_t& on_state)
+void dht::set_external(const udp_endpoint& ep) 
 {
-	m_on_state = on_state;
+	m_external = ep;
+	m_nid = hash_id(ep.address());
+	LOG_DEBUG("New node ID = %s", m_nid.to_string().c_str());
 }
 
-void dht::add_bootstrap(const std::string& name, uint16_t port)
+void dht::add_bootstrap(const udp_endpoint& ep)
 {
-	m_bootstraps.push_back(std::make_shared<dht_bootstrap_node>(*this, name, port));
+	m_bootstraps.push_back(ep);
 }
 
-size_t dht::run_query(const hash_id& nid, bool publish, const duration& refresh_rate)
+size_t dht::run_query(const hash_id& nid, const duration& refresh_rate)
 {
 	m_locations[m_next_query_id] = std::make_shared<dht_location>(
-		*this, nid, publish, refresh_rate);
+		*this, nid, refresh_rate);
 	return m_next_query_id++;
 }
 
@@ -912,6 +822,14 @@ void dht::set_ready_handler(size_t which, const std::function<void()>& on_done)
 	auto it = m_locations.find(which);
 	if (it != m_locations.end()) {
 		it->second->set_ready_handler(on_done);
+	}
+}
+
+void dht::set_publish(size_t which, bool publish)
+{
+	auto it = m_locations.find(which);
+	if (it != m_locations.end()) {
+		it->second->set_publish(publish);
 	}
 }
 
@@ -935,6 +853,14 @@ void dht::cancel_query(size_t which)
 	}
 }
 
+void dht::stop_all()
+{
+	while(!m_locations.empty()) {
+		m_locations.begin()->second->cancel();
+		m_locations.erase(m_locations.begin());
+	}
+}
+
 void dht::process_nodes(const std::string& nodes)
 {
 	for(size_t i = 0; i < nodes.size() / 26; i++) {
@@ -944,74 +870,12 @@ void dht::process_nodes(const std::string& nodes)
 		ip_address_v4 bip(ip);
 		udp_endpoint ep(bip, port);
 		for(auto& kvp : m_locations) {
-			if (bip == m_external) {
+			if (bip == m_external.address()) {
 				continue;
 			}
 			kvp.second->on_node(ep, nid);
 		}
 	}
-}
-
-std::vector<udp_endpoint> dht::get_bootstraps()
-{
-	std::vector<udp_endpoint> r;
-	for(const auto& ptr : m_bootstraps) {
-		if (ptr->is_ready()) {
-			r.push_back(ptr->endpoint());
-		}
-	}
-	return r;
-}
-
-void dht::bootstrap_state_change()
-{
-	size_t num_ext = 0;
-	std::map<ip_address, size_t> votes;
-	for(const auto& ptr : m_bootstraps) {
-		if (ptr->is_ready() && ptr->external_addr() != ip_address()) {
-			votes[ptr->external_addr()]++;
-			num_ext++;
-		}
-	}
-	bool is_ready = false;
-	ip_address choice;	
-	for(const auto& kvp : votes) {
-		if (kvp.second > num_ext / 2) {
-			choice = kvp.first;
-			is_ready = true; 
-			break;
-		}
-	}
-	if ((m_ready && !is_ready) ||  // No longer up, or
-		(is_ready && m_ready && m_external != choice)) { // Or IP changed
-		bootstrap_down();
-	}
-	if (!m_ready && is_ready) { // If we are up
-		bootstrap_up(choice);
-	}
-}
-
-void dht::bootstrap_up(const ip_address& ip) 
-{
-	LOG_DEBUG("Bootstrap UP!");
-	m_ready = true;
-	// Set external and recompute node ID
-	m_external = ip;
-	m_nid = hash_id(ip);
-	LOG_DEBUG("New node ID = %s", m_nid.to_string().c_str());
-	m_on_state(true);
-}
-
-void dht::bootstrap_down()
-{
-	LOG_DEBUG("Bootstrap DOWN!");
-	m_external = ip_address();
-	m_ready = false;
-	while(!m_locations.empty()) {
-		m_locations.begin()->second->cancel();
-		m_locations.erase(m_locations.begin());
-	}
-	m_on_state(false);
 }
 
 /*
@@ -1023,19 +887,16 @@ int main()
 	udp_port up(ios, 6881);
 
 	auto dht_ptr = std::make_shared<dht>(tm, up);
-	dht_ptr->set_state_handler([dht_ptr](bool x) {
-		printf("W00t, up\n");
-		size_t qid = dht_ptr->run_query(hash_id::hash_of("Hello"), false, 1_min);
-		dht_ptr->set_ready_handler(qid, [dht_ptr, qid]()
-		{
-			LOG_DEBUG("OK: all done");
-			dht_ptr->cancel_query(qid);
-		});
-	});
+	dht_ptr->add_bootstrap(udp_resolve(ios, "dht.transmissionbt.com", "6881"));
+	dht_ptr->add_bootstrap(udp_resolve(ios, "router.utorrent.com", "6881"));
+	dht_ptr->add_bootstrap(udp_resolve(ios, "router.bittorrent.com", "6881"));
 
-	dht_ptr->add_bootstrap("dht.transmissionbt.com", 6881);
-	dht_ptr->add_bootstrap("router.utorrent.com", 6881);
-	dht_ptr->add_bootstrap("router.bittorrent.com", 6881);
+	printf("W00t, up\n");
+	size_t qid = dht_ptr->run_query(hash_id::hash_of("Hello"), false, 1_min);
+	dht_ptr->set_ready_handler(qid, [dht_ptr, qid]() {
+		LOG_DEBUG("OK: all done");
+		dht_ptr->cancel_query(qid);
+	});
 	
 	ios.run();
 }

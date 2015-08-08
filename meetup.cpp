@@ -12,6 +12,7 @@ meetup::meetup(const std::string& where, uint16_t local_port)
 	: m_where(where)
 	, m_tm(m_ios)
 	, m_udp(m_ios, 6881)
+	, m_stun(m_tm, m_udp, [this](stun_mgr::stun_state s, const udp_endpoint& ep) { on_stun_state(s, ep); })
 	, m_dht(m_tm, m_udp)
 	, m_group_qid(0)
 	, m_incoming_qid(0)
@@ -19,10 +20,9 @@ meetup::meetup(const std::string& where, uint16_t local_port)
 	, m_where_id(hash_id::hash_of(where))
 	, m_connect_timer(0)
 {
-	m_dht.set_state_handler([this](bool x) { on_dht_state(x); });
-        m_dht.add_bootstrap("dht.transmissionbt.com", 6881);
-        m_dht.add_bootstrap("router.utorrent.com", 6881);
-        m_dht.add_bootstrap("router.bittorrent.com", 6881);
+        m_dht.add_bootstrap(udp_resolve(m_ios, "dht.transmissionbt.com", "6881"));
+        m_dht.add_bootstrap(udp_resolve(m_ios, "router.utorrent.com", "6881"));
+        m_dht.add_bootstrap(udp_resolve(m_ios, "router.bittorrent.com", "6881"));
 	m_udp.add_protocol([this](const udp_endpoint& src, const char* buf, size_t len) -> bool {
 		if (len == 5 && memcmp(buf, "HELLO", 5) == 0) {
 			LOG_INFO("Got hello from %s", to_string(src).c_str());
@@ -38,17 +38,43 @@ void meetup::run()
 	m_ios.run();
 }
 
-void meetup::on_dht_state(bool up) 
-{
-	if (up) {
-		LOG_INFO("DHT started");
-		m_group_qid = m_dht.run_query(hash_id::hash_of(m_where), true, k_group_publish_rate);
-		std::string incoming_str = m_where_id.to_string() + m_dht.external().to_string();
-		m_incoming_qid = m_dht.run_query(hash_id::hash_of(incoming_str), false, k_incoming_dht_rate);
-		m_connect_timer = m_tm.add(now() + k_connect_out_rate, [this]() { connect_timer(); });
-		m_inbound_timer = m_tm.add(now() + k_incoming_hello_rate, [this]() { inbound_timer(); });
+void meetup::on_stun_state(stun_mgr::stun_state s, const udp_endpoint& ep) 
+{	
+	LOG_INFO("Got new STUN state: %d, %s", s, to_string(ep).c_str());
+	if (s != stun_mgr::state_down) {
+		if (!m_group_qid) {
+			// Start group if it's not going
+			LOG_INFO("Starting group DHT entry");
+			m_group_qid = m_dht.run_query(m_where_id, k_group_publish_rate);
+		}
+		m_dht.set_publish(m_group_qid, (s == stun_mgr::state_cone));
+		// Start connect timer if it's not already running
+		if (!m_connect_timer) {
+			m_connect_timer = m_tm.add(now() + k_connect_out_rate, [this]() { connect_timer(); });
+		}
+		// Stop any exiting incoming stuff
+		if (m_inbound_timer) {
+			m_tm.cancel(m_inbound_timer);
+			m_inbound_timer = 0;
+		}
+		if (m_incoming_qid) {
+			m_dht.cancel_query(m_incoming_qid);
+			m_incoming_qid = 0;
+		}
+		// If we are cone, start incoming
+		if (s == stun_mgr::state_cone) {
+			LOG_INFO("Starting Incoming DHT entry");
+			std::string incoming_str = m_where_id.to_string() + ep.address().to_string();
+			m_incoming_qid = m_dht.run_query(hash_id::hash_of(incoming_str), k_incoming_dht_rate);
+			m_inbound_timer = m_tm.add(now() + k_incoming_hello_rate, [this]() { inbound_timer(); });
+		}
 	} else {
-		LOG_INFO("DHT failed");
+		LOG_INFO("Shutting down DHT entries");
+		m_tm.cancel(m_connect_timer);
+		m_tm.cancel(m_inbound_timer);
+		m_connect_timer = m_inbound_timer = 0;
+		m_group_qid = m_incoming_qid = m_outgoing_qid = 0;
+		m_dht.stop_all();
 	}
 }
 
@@ -60,7 +86,8 @@ void meetup::connect_timer()
 			m_outgoing_addr = pick_random(peers);
 			LOG_INFO("Starting search for %s", to_string(m_outgoing_addr).c_str());
 			std::string outgoing_str = m_where_id.to_string() + m_outgoing_addr.address().to_string();
-			m_outgoing_qid = m_dht.run_query(hash_id::hash_of(outgoing_str), true, 1_min);
+			m_outgoing_qid = m_dht.run_query(hash_id::hash_of(outgoing_str), 1_min);
+			m_dht.set_publish(m_outgoing_qid, true);
 			m_dht.set_ready_handler(m_outgoing_qid, [this]() {
 				LOG_INFO("Finished search for %s", to_string(m_outgoing_addr).c_str());
 				size_t out_qid = m_outgoing_qid;
@@ -100,7 +127,12 @@ udp_endpoint meetup::pick_random(const std::map<udp_endpoint, int>& peers)
 
 int main()
 {
-	meetup m("Hello World", 1234);
-	m.run();
+	try {
+		meetup m("Hello World", 1234);
+		m.run();
+	}
+	catch(const std::exception& e) {
+		LOG_ERROR("Caught unhandled exception: %s", e.what());
+	}
 }
 

@@ -137,10 +137,12 @@ class dht_location
 	friend class dht_bucket;
 public:
 	// Make a new DHT location
-	dht_location(dht& dht, const hash_id& tid, bool publish, const duration& peer_delay);
+	dht_location(dht& dht, const hash_id& tid, const duration& peer_delay);
 	~dht_location();
 	// Set handler
 	void set_ready_handler(const std::function<void ()>& on_ready);
+	// Set publish flag
+	void set_publish(bool publish);
 	// Handle a new node being found
 	void on_node(const udp_endpoint& addr, const hash_id& nid);
 	// Print the current state
@@ -186,64 +188,30 @@ private:
 	std::set<std::string> m_pending;
 };
 
-struct dht_bootstrap_node {
-public:
-	dht_bootstrap_node(dht& dht, const std::string& name, uint16_t port);
-	bool is_ready() { return m_ready; }
-	const ip_address& external_addr() { return m_external; }
-	const udp_endpoint& endpoint() { return m_endpoint; }
-
-private:
-	void send_resolve();
-	void resolve_done(const error_code& ec, udp_resolver::iterator it);
-	void send_ping();
-	void on_ping_resp(be_map& b);
-	void on_ping_fail();
-
-	dht& m_dht;
-	std::string m_name;
-	uint16_t m_port;
-	bool m_ready;
-	udp_endpoint m_endpoint;
-	ip_address m_external;
-	udp_resolver m_resolver;
-	timer_id m_timer;
-	time_point m_last_ping;
-	duration m_timeout;
-	int m_fail_count;
-};
-
 class dht
 {
 	friend class dht_bucket;
 	friend class dht_location;
 	friend class dht_bootstrap_node;
 public:
-	typedef std::function<void(bool)> state_handler_t;
 	dht(timer_mgr& tm, udp_port& udp);
-	void set_state_handler(const state_handler_t& on_state);
-	void add_bootstrap(const std::string& name, uint16_t port);
-	size_t run_query(const hash_id& nid, bool publish, const duration& refresh_rate);
+	void set_external(const udp_endpoint& ep);
+	void add_bootstrap(const udp_endpoint& ep);
+	size_t run_query(const hash_id& nid, const duration& refresh_rate);
+	void set_publish(size_t which, bool publish);
 	void set_ready_handler(size_t which, const std::function<void()>& on_done);
 	std::map<udp_endpoint, int> check_query(size_t which);
 	void cancel_query(size_t which);
-	ip_address external() { return m_external; }
+	void stop_all();
 
 private:
-	void try_external();
 	void process_nodes(const std::string& nodes);
-	std::vector<udp_endpoint> get_bootstraps();
-	void bootstrap_state_change();
-	void bootstrap_up(const ip_address&);
-	void bootstrap_down();
 
 	timer_mgr& m_tm;
 	dht_rpc m_rpc;
-	state_handler_t m_on_state;
-	bool m_ready;
-	ip_address m_external;
+	udp_endpoint m_external;
 	hash_id m_nid;
-	std::vector<std::shared_ptr<dht_bootstrap_node>> m_bootstraps;
+	std::vector<udp_endpoint> m_bootstraps;
 	size_t m_next_query_id;
 	std::map<size_t, std::shared_ptr<dht_location>> m_locations;
 };
