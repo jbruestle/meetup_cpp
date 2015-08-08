@@ -674,6 +674,7 @@ void dht_location::on_good_down(dht_node_ptr p)
 
 void dht_location::send_get_peers(dht_node_ptr p)
 {
+	LOG_DEBUG("Sending to peer %s", to_string(p->addr).c_str());
 	m_good[p].pending = true;
 
 	be_map params = {
@@ -738,6 +739,7 @@ void dht_location::on_get_peers(dht_node_ptr p, be_map& resp)
 	pi.pending = false;
 	pi.when = now();
 	pi.what = peers;
+	pi.pending = false;
 	LOG_DEBUG("Got %d peers, token = %s", (int) peers.size(), hexify(token).c_str());
 	if (m_publish) {
 		be_map params = {
@@ -772,6 +774,7 @@ void dht_location::on_error(dht_node_ptr p)
 
 void dht_location::on_peer_timer()
 {
+	LOG_DEBUG("Peer timer");
 	dht_node_ptr which;
 	time_point oldest = now();
 	size_t i = 0;
