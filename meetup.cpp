@@ -42,6 +42,7 @@ void meetup::on_stun_state(stun_mgr::stun_state s, const udp_endpoint& ep)
 {	
 	LOG_INFO("Got new STUN state: %d, %s", s, to_string(ep).c_str());
 	if (s != stun_mgr::state_down) {
+		m_dht.set_external(ep);
 		if (!m_group_qid) {
 			// Start group if it's not going
 			LOG_INFO("Starting group DHT entry");
