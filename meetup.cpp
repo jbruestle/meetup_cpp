@@ -122,8 +122,14 @@ void meetup::inbound_timer()
 
 udp_endpoint meetup::pick_random(const std::map<udp_endpoint, int>& peers)
 {
-	// TODO: Something real
-	return peers.begin()->first;
+	size_t i = random() % peers.size();
+	for(const auto& kvp : peers) {
+		if (i == 0) {
+			return peers.begin()->first;
+		}
+		i--;
+	}
+	throw std::runtime_error("Logic error in pick_random");
 }
 
 int main(int argc, char* argv[])
