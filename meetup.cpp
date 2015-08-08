@@ -109,7 +109,7 @@ void meetup::connect_timer()
 
 void meetup::inbound_timer() 
 {
-	auto peers = m_dht.check_query(m_group_qid);
+	auto peers = m_dht.check_query(m_incoming_qid);
 	if (peers.size()) {
 		udp_endpoint who = pick_random(peers);
 		LOG_INFO("Sending hello via incoming to %s", to_string(who).c_str());
