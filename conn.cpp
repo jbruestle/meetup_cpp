@@ -163,6 +163,9 @@ void conn::start_connect()
 
 void conn::on_connect(const boost::system::error_code& error)
 {
+	if (m_local_connect != 0) {
+		m_mgr.m_tm.cancel(m_local_connect);
+	}
 	if (error) {
 		m_state = state::time_wait;
 		m_down_time = now_sec();
