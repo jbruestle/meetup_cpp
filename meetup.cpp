@@ -19,17 +19,11 @@ meetup::meetup(const std::string& where, uint16_t local_port)
 	, m_outgoing_qid(0)
 	, m_where_id(hash_id::hash_of(where))
 	, m_connect_timer(0)
+	, m_conn_mgr(m_tm, m_udp, local_port)
 {
         m_dht.add_bootstrap(udp_resolve(m_ios, "dht.transmissionbt.com", "6881"));
         m_dht.add_bootstrap(udp_resolve(m_ios, "router.utorrent.com", "6881"));
         m_dht.add_bootstrap(udp_resolve(m_ios, "router.bittorrent.com", "6881"));
-	m_udp.add_protocol([this](const udp_endpoint& src, const char* buf, size_t len) -> bool {
-		if (len == 5 && memcmp(buf, "HELLO", 5) == 0) {
-			LOG_INFO("Got hello from %s", to_string(src).c_str());
-			return true;
-		}
-		return false;
-	});
 }
 
 void meetup::run() 
@@ -101,8 +95,8 @@ void meetup::connect_timer()
 		}
 	}
 	if (m_outgoing_qid) {
-		LOG_INFO("Sending hello to %s", to_string(m_outgoing_addr).c_str());
-		m_udp.send(m_outgoing_addr, "HELLO", 5);
+		LOG_INFO("Sending probe to %s", to_string(m_outgoing_addr).c_str());
+		m_conn_mgr.send_probe(m_outgoing_addr);
 	}
 	m_connect_timer = m_tm.add(now() + k_connect_out_rate, [this]() { connect_timer(); });
 }
@@ -112,8 +106,8 @@ void meetup::inbound_timer()
 	auto peers = m_dht.check_query(m_incoming_qid);
 	if (peers.size()) {
 		udp_endpoint who = pick_random(peers);
-		LOG_INFO("Sending hello via incoming to %s", to_string(who).c_str());
-		m_udp.send(who, "HELLO", 5);
+		LOG_INFO("Sending probe  via incoming to %s", to_string(who).c_str());
+		m_conn_mgr.send_probe(who);
 	} else {
 		LOG_INFO("No peers found for inbound");
 	}
@@ -135,8 +129,8 @@ udp_endpoint meetup::pick_random(const std::map<udp_endpoint, int>& peers)
 int main(int argc, char* argv[])
 {
 	try {
-		runtime_assert(argc >= 2);
-		meetup m(argv[1], 1234);
+		runtime_assert(argc >= 3);
+		meetup m(argv[1], atoi(argv[2]));
 		m.run();
 	}
 	catch(const std::exception& e) {

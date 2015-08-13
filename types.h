@@ -20,4 +20,13 @@ typedef boost::asio::ip::udp::resolver udp_resolver;
 #define FATAL(format, ...) do { LOG_ERROR(format, ##__VA_ARGS__); exit(1); } while(0)
 #define runtime_assert(COND) do { if (!(COND)) { throw std::runtime_error(#COND); }} while(0)
 
+namespace std {
+template<typename T, typename ...Args>
+std::unique_ptr<T> make_unique( Args&& ...args )
+{
+        return std::unique_ptr<T>( new T( std::forward<Args>(args)... ) );
+}
+}
+
+
 

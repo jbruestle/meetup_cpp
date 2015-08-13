@@ -193,7 +193,6 @@ void flow_send::on_ack(seq_t ack, size_t window, const duration* rtt)
 		m_send_timer = 0;
 	}
 	m_rto = m_rtt_avg + 2 * m_rtt_dev;
-	start_timer();
 	// Handle recovery mode
 	if (m_in_recover) {
 		LOG_DEBUG("    In recovery mode");
@@ -205,6 +204,7 @@ void flow_send::on_ack(seq_t ack, size_t window, const duration* rtt)
 			m_ack_seq = ack;
 			// Resend packet
 			resend_head();
+			start_timer();
 			return;
 		} else {
 			m_cwnd = std::min(m_sst, flight_size() + MSS);
@@ -220,6 +220,7 @@ void flow_send::on_ack(seq_t ack, size_t window, const duration* rtt)
 	} else {
 		m_cwnd += std::max(size_t(1), MSS*MSS/m_cwnd);
 	}
+	start_timer();
 	start_read();					
 }
 
@@ -281,9 +282,11 @@ void flow_send::start_timer()
 	if (m_rto > MAX_RTO) {
 		m_rto = MAX_RTO;
 	}
-	LOG_DEBUG("adding timer, %u ms from now", uint32_t(
-		std::chrono::duration_cast<std::chrono::milliseconds>(m_rto).count()));
-	m_send_timer = m_tm.add(now() + m_rto, [this]() { on_timeout(); });
+	if (m_send_seq != m_ack_seq) {
+		LOG_DEBUG("adding timer, %u ms from now", uint32_t(
+			std::chrono::duration_cast<std::chrono::milliseconds>(m_rto).count()));
+		m_send_timer = m_tm.add(now() + m_rto, [this]() { on_timeout(); });
+	}
 }
 
 void flow_send::resend_head()

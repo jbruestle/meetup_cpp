@@ -1,6 +1,7 @@
 
 #include "dht.h"
 #include "stun.h"
+#include "conn.h"
 
 class meetup
 {
@@ -27,4 +28,5 @@ private:
 	hash_id m_where_id;
 	timer_id m_connect_timer;
 	timer_id m_inbound_timer;
+	conn_mgr m_conn_mgr;
 };
