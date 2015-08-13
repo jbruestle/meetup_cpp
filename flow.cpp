@@ -247,7 +247,7 @@ void flow_send::read_complete(const error_code& err, size_t len)
 	m_read_pending = false;
 	if (err) {
 		m_err = err;
-                LOG_WARN("TODO: read errored: err = %s", err.message().c_str())
+                LOG_WARN("TODO: read errored: err = %s", err.message().c_str());
 		exit(1);
                 return;
         }
