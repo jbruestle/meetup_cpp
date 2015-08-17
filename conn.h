@@ -38,10 +38,12 @@ private:
 	void on_packet(const conn_hdr &hdr, const char* data, size_t len);
 	void send_seq(seq_t seq, const char* buf, size_t len);
 	void send_ack(seq_t ack, size_t window, timestamp_t stamp);
-	void do_keepalive();
+	void do_keep_alive();
+	void do_kill_remote();
+	void socket_error(const error_code& error);
 	bool process_packet(const conn_hdr &hdr, const char* data, size_t len);
 	void start_connect();
-	void on_connect(const boost::system::error_code& error);
+	void on_connect(const error_code& error);
 
 	enum class state {
 		starting,
@@ -70,8 +72,10 @@ private:
         uint32_t m_token;
 	uint32_t m_down_time;
 	timer_id m_local_connect;
-	timer_id m_keepalive;
-        std::unique_ptr<tcp_socket> m_socket;
+	timer_id m_keep_alive;
+	timer_id m_kill_remote;
+	int m_num_up;
+	std::unique_ptr<tcp_socket> m_socket;
         std::unique_ptr<flow_recv> m_recv;
         std::unique_ptr<flow_send> m_send;
 	std::queue<pkt_queue_entry> m_queue;

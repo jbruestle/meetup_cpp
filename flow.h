@@ -38,12 +38,13 @@ class flow_recv
 {
 public:
 	typedef std::function<void (seq_t ack, size_t window, timestamp_t stamp)> send_func_t;
-	flow_recv(timer_mgr& tm, tcp_socket& sink, const send_func_t& do_send);
+	typedef std::function<void (const error_code& err)> on_err_func_t;
+	// Constructor and destructor
+	flow_recv(timer_mgr& tm, tcp_socket& sink, const send_func_t& do_send, const on_err_func_t& on_err);
+	~flow_recv();
 	// Called when a packet arrives, returns true if true if we
 	// need to generate an ACK immediately
 	void on_packet(seq_t seq, timestamp_t stamp, const char* data, size_t len);
-	// Check error code
-	const error_code& get_error() const { return m_err; }
 private:
 	// Start a write
 	void start_write();	
@@ -59,10 +60,10 @@ private:
 	tcp_socket& m_sink;
 	// Where to send packets
 	send_func_t m_do_send;
+	// What to do with errors to socket
+	on_err_func_t m_on_err;
 	// Is there a write currently pending
 	bool m_write_pending;
-	// Error state
-	error_code m_err;
 	// Current ack seq number
 	seq_t m_ack_seq;
 	// Current 'head' of unwritten data
@@ -77,12 +78,13 @@ class flow_send
 {
 public:
 	typedef std::function<void (seq_t seq, const char* buf, size_t len)> send_func_t;
+	typedef std::function<void (const error_code& err)> on_err_func_t;
 	// Make a new flow_send
-	flow_send(timer_mgr& tm, tcp_socket& source, const send_func_t& do_send);
+	flow_send(timer_mgr& tm, tcp_socket& source, const send_func_t& do_send, const on_err_func_t& on_err);
+	// Destructor
+	~flow_send();
 	// Called when an ACK packet arrives
 	void on_ack(seq_t ack, size_t window, const duration* rtt);
-	// Check error code
-	const error_code& get_error() const { return m_err; }
 private:
 	// Start a read
 	void start_read();	
@@ -107,10 +109,10 @@ private:
 	tcp_socket& m_source;
 	// Where to send packets
 	send_func_t m_do_send;
+	// What to do on errors to socket
+	on_err_func_t m_on_err;
 	// Is a read from source pending
 	bool m_read_pending;
-	// Error state
-	error_code m_err;
 	// Highest sequence send + 1
 	seq_t m_send_seq;
 	// Highest sequence acked

@@ -128,6 +128,8 @@ udp_endpoint meetup::pick_random(const std::map<udp_endpoint, int>& peers)
 
 int main(int argc, char* argv[])
 {
+	g_log_level[LT_FLOW] = LL_DEBUG;
+	g_log_level[LT_CONN] = LL_DEBUG;
 	try {
 		runtime_assert(argc >= 3);
 		meetup m(argv[1], atoi(argv[2]));

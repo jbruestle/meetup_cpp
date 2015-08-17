@@ -5,16 +5,25 @@
 
 #define LOG_TOPIC LT_FLOW
 
-flow_recv::flow_recv(timer_mgr& tm, tcp_socket& sink, const send_func_t& do_send)
+flow_recv::flow_recv(timer_mgr& tm, tcp_socket& sink, const send_func_t& do_send, const on_err_func_t& on_err)
 	: m_tm(tm)
 	, m_sink(sink)
 	, m_do_send(do_send)
+	, m_on_err(on_err)
 	, m_write_pending(false)
 	, m_ack_seq(0)
 	, m_head_seq(0)
 	, m_ack_timer(0)
+{}
+
+flow_recv::~flow_recv()
 {
-	
+	if (m_sink.is_open()) { 
+		m_sink.close(); 
+	}
+	if (m_ack_timer) {
+		m_tm.cancel(m_ack_timer);
+	}
 }
 
 void flow_recv::on_packet(seq_t seq, timestamp_t stamp, const char* data, size_t len)
@@ -61,9 +70,6 @@ void flow_recv::on_packet(seq_t seq, timestamp_t stamp, const char* data, size_t
 
 void flow_recv::start_write()
 {
-	if (m_err) {
-		return; 
-	}
 	// Find the earliest
 	auto it = m_pkt_buf.begin();
 	// While it's before head, pop it
@@ -89,9 +95,9 @@ void flow_recv::write_complete(const error_code& err, size_t len)
 {
 	m_write_pending = false;
 	if (err) {
-		LOG_WARN("TODO: write errored: err = %s", err.message().c_str());
-		m_err = err;
-		exit(1);
+		LOG_INFO("Socket write errored: err = %s", err.message().c_str());
+		m_on_err(err);
+		// Might be destroyed by here
 		return;
 	}
 	LOG_DEBUG("write complete: head_seq = %u, len = %u", uint32_t(m_head_seq), uint32_t(len));
@@ -105,6 +111,7 @@ void flow_recv::send_now(timestamp_t stamp)
 {
 	if (m_ack_timer) {
 		m_tm.cancel(m_ack_timer);
+		m_ack_timer = 0;
 	}
 	m_do_send(m_ack_seq, m_head_seq + WINDOW - m_ack_seq, stamp);
 }
@@ -117,10 +124,11 @@ void flow_recv::set_ack_timer()
 	});
 }
 
-flow_send::flow_send(timer_mgr& tm, tcp_socket& source, const send_func_t& do_send)
+flow_send::flow_send(timer_mgr& tm, tcp_socket& source, const send_func_t& do_send, const on_err_func_t& on_err)
 	: m_tm(tm)
 	, m_source(source)
 	, m_do_send(do_send)
+	, m_on_err(on_err)
 	, m_read_pending(false)
 	, m_send_seq(0)
 	, m_ack_seq(0)
@@ -139,6 +147,16 @@ flow_send::flow_send(timer_mgr& tm, tcp_socket& source, const send_func_t& do_se
 	, m_ftail(0)
 {
 	start_read();
+}
+
+flow_send::~flow_send()
+{
+	if (m_source.is_open()) { 
+		m_source.close(); 
+	}
+	if (m_send_timer) {
+		m_tm.cancel(m_send_timer);
+	}
 }
 
 void flow_send::on_ack(seq_t ack, size_t window, const duration* rtt)
@@ -229,9 +247,6 @@ void flow_send::start_read()
 	if (m_read_pending) {
 		return; // Read already pending
 	}
-	if (m_err) {
-		return; // Got an error, done
-	}
 	if (std::min(m_cwnd, m_window) < m_send_seq - m_ack_seq + MSS) {
 		return; // No room in window
 	}
@@ -246,9 +261,9 @@ void flow_send::read_complete(const error_code& err, size_t len)
 {
 	m_read_pending = false;
 	if (err) {
-		m_err = err;
-                LOG_WARN("TODO: read errored: err = %s", err.message().c_str());
-		exit(1);
+                LOG_INFO("read errored: err = %s", err.message().c_str());
+		m_on_err(err);
+		// Might be destroyed here
                 return;
         }
 	enqueue_in_flight(m_read_buf, len);
@@ -336,8 +351,12 @@ udp_flow_mgr::udp_flow_mgr(timer_mgr& tm, udp_port& udp, tcp_socket& tcp, udp_en
 	, m_udp(udp)
 	, m_tcp(tcp)
 	, m_remote(remote)
-	, m_send(tm, tcp, [this](seq_t seq, const char* buf, size_t len) { send_seq(seq, buf, len); })
-	, m_recv(tm, tcp, [this](seq_t ack, size_t window, timestamp_t stamp) { send_ack(ack, window, stamp); }) 
+	, m_send(tm, tcp, 
+		[this](seq_t seq, const char* buf, size_t len) { send_seq(seq, buf, len); },
+		[this](const error_code& err) {})
+	, m_recv(tm, tcp, 
+		[this](seq_t ack, size_t window, timestamp_t stamp) { send_ack(ack, window, stamp); },
+		[this](const error_code& err) {})
 {
 	m_udp.add_protocol([this, remote](const udp_endpoint& src, const char* buf, size_t len) -> bool {
 		if (src != remote) {

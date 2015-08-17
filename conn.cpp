@@ -13,6 +13,9 @@ conn::conn(conn_mgr& mgr, const udp_endpoint& who, const conn_hdr &hdr)
 	, m_state(state::starting)
 	, m_time(hdr.s_time)
 	, m_token(hdr.s_token)
+	, m_num_up(0)
+	, m_keep_alive(0)
+	, m_kill_remote(0)
 {
 	start_connect();
 }
@@ -29,6 +32,9 @@ void conn::reset(const conn_hdr &hdr)
 void conn::on_packet(const conn_hdr &hdr, const char* data, size_t len)
 {
 	assert(m_state != state::time_wait);
+        // Push back kill remote
+        m_mgr.m_tm.cancel(m_kill_remote);
+        m_kill_remote = m_mgr.m_tm.add(now() + 3 * KEEP_ALIVE, [this]() { do_kill_remote(); });
 	// Update remote time + token
 	if (uint8_t(hdr.s_time - m_time) < 127) {
 		m_time = hdr.s_time;
@@ -61,9 +67,9 @@ struct data_ack_hdr {
 
 void conn::send_seq(seq_t seq, const char* buf, size_t len)
 {
-        // Push back keepalive
-        m_mgr.m_tm.cancel(m_keepalive);
-        m_keepalive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keepalive(); });
+        // Push back keep alive
+        m_mgr.m_tm.cancel(m_keep_alive);
+        m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
         // Make space for headers
         conn_hdr& chdr = *((conn_hdr*) (m_mgr.m_send_buf));
         data_hdr& dhdr = *((data_hdr*) (m_mgr.m_send_buf + sizeof(conn_hdr)));
@@ -86,9 +92,9 @@ void conn::send_seq(seq_t seq, const char* buf, size_t len)
 
 void conn::send_ack(seq_t ack, size_t window, timestamp_t stamp)
 {
-        // Push back keepalive
-        m_mgr.m_tm.cancel(m_keepalive);
-        m_keepalive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keepalive(); });
+        // Push back kee palive
+        m_mgr.m_tm.cancel(m_keep_alive);
+        m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
         // Make space for headers
         conn_hdr& chdr = *((conn_hdr*) (m_mgr.m_send_buf));
         data_ack_hdr& dhdr = *((data_ack_hdr*) (m_mgr.m_send_buf + sizeof(conn_hdr)));
@@ -104,7 +110,7 @@ void conn::send_ack(seq_t ack, size_t window, timestamp_t stamp)
 	m_mgr.send_packet(m_who, sizeof(conn_hdr) + sizeof(data_ack_hdr));
 }
 
-void conn::do_keepalive()
+void conn::do_keep_alive()
 {
         // Make space for headers
         conn_hdr& chdr = *((conn_hdr*) (m_mgr.m_send_buf));
@@ -115,7 +121,38 @@ void conn::do_keepalive()
 	// Send packet + reschedule
         LOG_DEBUG("Sending keepalive");
 	m_mgr.send_packet(m_who, sizeof(conn_hdr));
-        m_keepalive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keepalive(); });
+        m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
+}
+
+void conn::do_kill_remote()
+{
+	m_kill_remote = 0;
+	if (m_socket->is_open()) {
+		m_socket->close();
+	}
+}
+
+void conn::socket_error(const error_code& error)
+{
+	assert(m_state == state::running);
+	m_num_up--;
+	if (m_num_up > 0) {
+		if (m_socket->is_open()) {
+			m_socket->close();
+		}
+		return;
+	}
+	m_mgr.m_tm.cancel(m_keep_alive);
+	m_keep_alive = 0;
+	if (m_kill_remote) {
+		m_mgr.m_tm.cancel(m_kill_remote);
+		m_kill_remote = 0;
+	}
+	m_recv.reset();
+	m_send.reset();
+	m_socket.reset();
+	m_state = state::time_wait;
+	m_down_time = now_sec();
 }
 
 bool conn::process_packet(const conn_hdr &hdr, const char* data, size_t size)
@@ -154,14 +191,14 @@ void conn::start_connect()
 {
 	m_socket = std::make_unique<tcp_socket>(m_mgr.m_tm.get_ios());
 	m_socket->async_connect(tcp_endpoint(ip_address_v4::loopback(), m_mgr.m_tcp_port), 
-		[this](const boost::system::error_code& error) { on_connect(error); });
+		[this](const error_code& error) { on_connect(error); });
 	m_local_connect = m_mgr.m_tm.add(now() + 10_sec, [this]() {
 		m_local_connect = 0;
-		m_socket->cancel();
+		m_socket->close();
 	});
 };
 
-void conn::on_connect(const boost::system::error_code& error)
+void conn::on_connect(const error_code& error)
 {
 	if (m_local_connect != 0) {
 		m_mgr.m_tm.cancel(m_local_connect);
@@ -175,12 +212,16 @@ void conn::on_connect(const boost::system::error_code& error)
 	m_recv = std::make_unique<flow_recv>(m_mgr.m_tm, *m_socket, 
 		[this](seq_t ack, size_t window, timestamp_t stamp) {
 			send_ack(ack, window, stamp);
-		});
+		},
+		[this](const error_code& err) { socket_error(err); });
 	m_send = std::make_unique<flow_send>(m_mgr.m_tm, *m_socket, 
 		[this](seq_t seq, const char* buf, size_t len) {
 			send_seq(seq, buf, len);
-		});
-	m_keepalive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keepalive(); });
+		},
+		[this](const error_code& err) { socket_error(err); });
+	m_num_up = 2;
+	m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
+	m_kill_remote = m_mgr.m_tm.add(now() + 3*KEEP_ALIVE, [this]() { do_kill_remote(); });
 	while(!m_queue.empty()) {
 		const pkt_queue_entry& entry = m_queue.front();
 		process_packet(entry.hdr, entry.data, entry.len);
@@ -309,7 +350,7 @@ int main()
 	l2.listen();
 	tcp_socket s1(ios);
 	tcp_socket s2(ios);
-	l1.async_accept(s1, [&](const boost::system::error_code& error) {
+	l1.async_accept(s1, [&](const error_code& error) {
 		if (error) {
 			LOG_DEBUG("Accept error");
 			exit(1);
@@ -318,7 +359,7 @@ int main()
 		listeners--;
 		s1.send(boost::asio::buffer("Hello", 5));
 	});
-	l2.async_accept(s2, [&](const boost::system::error_code& error) {
+	l2.async_accept(s2, [&](const error_code& error) {
 		if (error) {
 			LOG_DEBUG("Accept error");
 			exit(1);
