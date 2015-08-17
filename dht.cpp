@@ -46,43 +46,43 @@ hash_id::hash_id(const char* data)
 
 hash_id::hash_id(const ip_address& addr) {
 	uint8_t* ip = 0;
-        
-        const static uint8_t v4mask[] = { 0x03, 0x0f, 0x3f, 0xff };
-        const static uint8_t v6mask[] = { 0x01, 0x03, 0x07, 0x0f, 0x1f, 0x3f, 0x7f, 0xff };
-        boost::uint8_t const* mask = 0;
-        int num_octets = 0;
+	
+	const static uint8_t v4mask[] = { 0x03, 0x0f, 0x3f, 0xff };
+	const static uint8_t v6mask[] = { 0x01, 0x03, 0x07, 0x0f, 0x1f, 0x3f, 0x7f, 0xff };
+	boost::uint8_t const* mask = 0;
+	int num_octets = 0;
 
-        ip_address_v4::bytes_type b4;
-        ip_address_v6::bytes_type b6;
-        if (addr.is_v6()) {
-                b6 = addr.to_v6().to_bytes();
-                ip = &b6[0];
-                num_octets = 8;
-                mask = v6mask;
-        }
-        else {
-                b4 = addr.to_v4().to_bytes();
-                ip = &b4[0];
-                num_octets = 4;
-                mask = v4mask;
-        }
+	ip_address_v4::bytes_type b4;
+	ip_address_v6::bytes_type b6;
+	if (addr.is_v6()) {
+		b6 = addr.to_v6().to_bytes();
+		ip = &b6[0];
+		num_octets = 8;
+		mask = v6mask;
+	}
+	else {
+		b4 = addr.to_v4().to_bytes();
+		ip = &b4[0];
+		num_octets = 4;
+		mask = v4mask;
+	}
 
-        for (int i = 0; i < num_octets; ++i)
-                ip[i] &= mask[i];
+	for (int i = 0; i < num_octets; ++i)
+		ip[i] &= mask[i];
 
 	uint32_t r = ::random() & 0xff;
-        m_buf[0] |= (r & 0x7) << 5;
+	m_buf[0] |= (r & 0x7) << 5;
 
-        boost::crc_optimal<32, 0x1EDC6F41, 0xFFFFFFFF, 0xFFFFFFFF, true, true> crc;
-        crc.process_block(ip, ip + num_octets);
-        uint32_t c = crc.checksum();
+	boost::crc_optimal<32, 0x1EDC6F41, 0xFFFFFFFF, 0xFFFFFFFF, true, true> crc;
+	crc.process_block(ip, ip + num_octets);
+	uint32_t c = crc.checksum();
 
-        m_buf[0] = (c >> 24) & 0xff;
-        m_buf[1] = (c >> 16) & 0xff;
-        m_buf[2] = ((c >> 8) & 0xf8) | (::random() & 0x7);
+	m_buf[0] = (c >> 24) & 0xff;
+	m_buf[1] = (c >> 16) & 0xff;
+	m_buf[2] = ((c >> 8) & 0xf8) | (::random() & 0x7);
 
-        for (int i = 3; i < 19; ++i) m_buf[i] = ::random() & 0xff;
-        m_buf[19] = r & 0xff;
+	for (int i = 3; i < 19; ++i) m_buf[i] = ::random() & 0xff;
+	m_buf[19] = r & 0xff;
 }
 
 std::string hash_id::pack() const
@@ -242,8 +242,8 @@ void dht_rpc::on_query(const udp_endpoint& who, be_map& query)
 			throw std::runtime_error("Unknown handler: " + qtype);
 		}
 		LOG_DEBUG("Recv from %s: Query, type=%s, tx_id=%s",
-                                to_string(who).c_str(),
-                                cleanify(qtype).c_str(),
+				to_string(who).c_str(),
+				cleanify(qtype).c_str(),
 				hexify(tx_id).c_str());
 		be_map out = it->second(args);
 		resp["y"] = "r";
@@ -272,7 +272,7 @@ void dht_rpc::on_response(const udp_endpoint& who, const std::string& type, be_m
 		runtime_assert(m_pending.count(tx_id));
 	} catch (const std::exception& e) {
 		LOG_DEBUG("Recv from %s: Error, response has missing or unassigned tx_id: %s",
-                                to_string(who).c_str(), hexify(tx_id).c_str());
+				to_string(who).c_str(), hexify(tx_id).c_str());
 		return;
 	}
 	// Load pending transaction
@@ -288,7 +288,7 @@ void dht_rpc::on_response(const udp_endpoint& who, const std::string& type, be_m
 			e = bencode(resp["e"]);
 		}
 		LOG_DEBUG("Recv from %s: Error, remote err for tx_id=%s, qtype=%s: %s",
-                                to_string(who).c_str(), hexify(tx_id).c_str(), 
+				to_string(who).c_str(), hexify(tx_id).c_str(), 
 				p.qtype.c_str(), cleanify(e).c_str());
 		p.on_failure(tx_id);
 		return;
@@ -299,14 +299,14 @@ void dht_rpc::on_response(const udp_endpoint& who, const std::string& type, be_m
 		args = boost::get<be_map>(resp["r"]);
 	} catch (const std::exception& e) {
 		LOG_DEBUG("Recv from %s: Error, invalid 'r' in response tx_id=%s, qtype=%s",
-                                to_string(who).c_str(), hexify(tx_id).c_str(), p.qtype.c_str());
+				to_string(who).c_str(), hexify(tx_id).c_str(), p.qtype.c_str());
 		p.on_failure(tx_id);
 		return;
 	}
 	// Make sure it's in the table + from the proper source
 	if (p.who != who) {
 		LOG_DEBUG("Recv from %s: Error, response has invalid source, tx_id=%s, qtype=%s, osrc=%s",
-                                to_string(who).c_str(), hexify(tx_id).c_str(), 
+				to_string(who).c_str(), hexify(tx_id).c_str(), 
 				p.qtype.c_str(), to_string(p.who).c_str());
 		p.on_failure(tx_id);
 		return;
@@ -613,6 +613,7 @@ void dht_location::on_timer()
 
 void dht_location::send_bootstrap(const udp_endpoint& ep)
 {
+	LOG_INFO("%s: Sending bootstrap to %s", m_tid.to_string().c_str(), to_string(ep).c_str());
 	m_last_bootstrap = now();
 	be_map params = {
 		{ "id" , m_dht.m_nid.pack() },
@@ -635,14 +636,18 @@ void dht_location::on_bootstrap(be_map& resp)
 		if (nodes.size() % 26 != 0) {
 			throw std::runtime_error("invalid nodes");
 		}
+		LOG_INFO("%s: got bootstrap response, %d nodes", m_tid.to_string().c_str(),
+			(int) (nodes.size() / 26));
 		m_dht.process_nodes(nodes);
 	} catch(const std::exception& e) {
+		LOG_WARN("%s: Bootstrap returned error: %s", m_tid.to_string().c_str(), e.what());
 		// Ignore
 	}
 }
 
 void dht_location::on_ready()
 {
+	LOG_INFO("%s: READY", m_tid.to_string().c_str());
 	m_is_ready = true;
 	m_peer_timer = m_dht.m_tm.add(now() + m_peer_delay,
 		[this]() { on_peer_timer(); });
@@ -654,6 +659,9 @@ void dht_location::on_ready()
 void dht_location::on_good_up(dht_node_ptr p) 
 {
 	m_good[p];
+	if (m_good.size() == 1 || m_good.size() % 10 == 0) {
+		LOG_INFO("%s: %d good nodes", m_tid.to_string().c_str(), (int) m_good.size());
+	}
 	if (p->depth < 15) {
 		return;
 	}

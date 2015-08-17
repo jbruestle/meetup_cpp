@@ -21,9 +21,9 @@ meetup::meetup(const std::string& where, uint16_t local_port)
 	, m_connect_timer(0)
 	, m_conn_mgr(m_tm, m_udp, local_port)
 {
-        m_dht.add_bootstrap(udp_resolve(m_ios, "dht.transmissionbt.com", "6881"));
-        m_dht.add_bootstrap(udp_resolve(m_ios, "router.utorrent.com", "6881"));
-        m_dht.add_bootstrap(udp_resolve(m_ios, "router.bittorrent.com", "6881"));
+	m_dht.add_bootstrap(udp_resolve(m_ios, "dht.transmissionbt.com", "6881"));
+	m_dht.add_bootstrap(udp_resolve(m_ios, "router.utorrent.com", "6881"));
+	m_dht.add_bootstrap(udp_resolve(m_ios, "router.bittorrent.com", "6881"));
 }
 
 void meetup::run() 
@@ -128,6 +128,8 @@ udp_endpoint meetup::pick_random(const std::map<udp_endpoint, int>& peers)
 
 int main(int argc, char* argv[])
 {
+	g_log_level[LT_STUN] = LL_INFO;
+	g_log_level[LT_DHT] = LL_INFO;
 	g_log_level[LT_FLOW] = LL_DEBUG;
 	g_log_level[LT_CONN] = LL_DEBUG;
 	try {

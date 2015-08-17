@@ -95,8 +95,8 @@ void stun_mgr::resolve_done(const error_code& ec, udp_resolver::iterator it)
 	}
 	memcpy(m_tx_id, p.tx_id, 12);
 	char* obuf = (char*) &p;
-	LOG_DEBUG("Sending packet to %s\n%s", to_string(ep).c_str(), 
-			 hexdump(std::string(obuf, 20)).c_str());
+	LOG_INFO("Sending STUN packet to %s", to_string(ep).c_str());
+	// hexdump(std::string(obuf, 20)).c_str());
 	m_udp.send(ep, obuf, 20);
 }
 
@@ -155,6 +155,7 @@ void stun_mgr::on_incoming(const udp_endpoint& who, const char* buf, size_t len)
 	// Clear errors
 	m_error_count = 0;
 
+	LOG_INFO("Got STUN response from %s: %s", to_string(who).c_str(), to_string(ep).c_str());
 	// Now do the state update
 	if (m_samples.size() < 5) {
 		LOG_DEBUG("Adding to samples");
@@ -188,10 +189,10 @@ void stun_mgr::on_timeout()
 	m_resolver.cancel();
 	// Update state goo
 	m_error_count++;
-	LOG_DEBUG("Timeout, error count = %lu", m_error_count);
+	LOG_INFO("Timeout, error count = %lu", m_error_count);
 	if (m_error_count >= 5) {
 		if (m_state != state_down) {
-			LOG_DEBUG("Too many errors, going down");
+			LOG_INFO("Too many errors, going down");
 			m_samples.clear();
 			m_state = state_down;
 			m_external = udp_endpoint();
@@ -235,7 +236,7 @@ void stun_mgr::process_samples()
 		return;
 	}
 	stun_state state = (ep_quorum ? state_cone : state_symmetric);
-	LOG_DEBUG("State = %d, choice = %s", state, to_string(choice).c_str());
+	LOG_INFO("New STUN State = %d, choice = %s", state, to_string(choice).c_str());
 	if (state != m_state || m_external != choice) {
 		LOG_DEBUG("State differs, doing update");
 		m_state = state;

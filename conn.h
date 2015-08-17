@@ -8,20 +8,20 @@
 
 enum class ptype : char
 {
-        probe = 0,
-        probe_ack = 1,
-        data = 2,
-        data_ack = 3,
+	probe = 0,
+	probe_ack = 1,
+	data = 2,
+	data_ack = 3,
 };
 
 struct __attribute__ ((__packed__)) conn_hdr 
 { 
-        char magic;
-        ptype type;
-        uint8_t s_time;
-        uint8_t r_time;
-        uint32_t s_token;
-        uint32_t r_token;
+	char magic;
+	ptype type;
+	uint8_t s_time;
+	uint8_t r_time;
+	uint32_t s_token;
+	uint32_t r_token;
 };
 
 class conn_mgr; 
@@ -67,17 +67,17 @@ private:
 
 	conn_mgr& m_mgr;
 	udp_endpoint m_who;
-        state m_state;
-        uint8_t m_time;
-        uint32_t m_token;
+	state m_state;
+	uint8_t m_time;
+	uint32_t m_token;
 	uint32_t m_down_time;
 	timer_id m_local_connect;
 	timer_id m_keep_alive;
 	timer_id m_kill_remote;
 	int m_num_up;
 	std::unique_ptr<tcp_socket> m_socket;
-        std::unique_ptr<flow_recv> m_recv;
-        std::unique_ptr<flow_send> m_send;
+	std::unique_ptr<flow_recv> m_recv;
+	std::unique_ptr<flow_send> m_send;
 	std::queue<pkt_queue_entry> m_queue;
 };
 

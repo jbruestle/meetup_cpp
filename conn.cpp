@@ -32,19 +32,21 @@ void conn::reset(const conn_hdr &hdr)
 void conn::on_packet(const conn_hdr &hdr, const char* data, size_t len)
 {
 	assert(m_state != state::time_wait);
-        // Push back kill remote
-        m_mgr.m_tm.cancel(m_kill_remote);
-        m_kill_remote = m_mgr.m_tm.add(now() + 3 * KEEP_ALIVE, [this]() { do_kill_remote(); });
+	// Push back kill remote
+	m_mgr.m_tm.cancel(m_kill_remote);
+	m_kill_remote = m_mgr.m_tm.add(now() + 3 * KEEP_ALIVE, [this]() { do_kill_remote(); });
 	// Update remote time + token
 	if (uint8_t(hdr.s_time - m_time) < 127) {
 		m_time = hdr.s_time;
 		m_token = hdr.s_token;
 	}
 	if (hdr.type != ptype::data && hdr.type != ptype::data_ack) {
+		LOG_WARN("Ignore strange packet from %s", to_string(m_who).c_str());
 		// Ignore any other types
 		return;
 	}
 	if (m_state == state::starting) {
+		LOG_INFO("Still connecting, queueing packet from %s", to_string(m_who).c_str());
 		m_queue.emplace(hdr, data, len);
 		if (m_queue.size() > 5) {
 			m_queue.pop();
@@ -55,24 +57,24 @@ void conn::on_packet(const conn_hdr &hdr, const char* data, size_t len)
 }
 
 struct data_hdr {
-        uint32_t seq;
-        uint32_t timestamp; 
+	uint32_t seq;
+	uint32_t timestamp; 
 };
 
 struct data_ack_hdr {
-        uint32_t ack;
-        uint32_t window;
-        uint32_t timestamp;
+	uint32_t ack;
+	uint32_t window;
+	uint32_t timestamp;
 };
 
 void conn::send_seq(seq_t seq, const char* buf, size_t len)
 {
-        // Push back keep alive
-        m_mgr.m_tm.cancel(m_keep_alive);
-        m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
-        // Make space for headers
-        conn_hdr& chdr = *((conn_hdr*) (m_mgr.m_send_buf));
-        data_hdr& dhdr = *((data_hdr*) (m_mgr.m_send_buf + sizeof(conn_hdr)));
+	// Push back keep alive
+	m_mgr.m_tm.cancel(m_keep_alive);
+	m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
+	// Make space for headers
+	conn_hdr& chdr = *((conn_hdr*) (m_mgr.m_send_buf));
+	data_hdr& dhdr = *((data_hdr*) (m_mgr.m_send_buf + sizeof(conn_hdr)));
 	char* data = m_mgr.m_send_buf + sizeof(conn_hdr) + sizeof(data_hdr);
 	assert(sizeof(conn_hdr) + sizeof(data_hdr) + len < 2048);
 	// Setup chdr
@@ -80,52 +82,53 @@ void conn::send_seq(seq_t seq, const char* buf, size_t len)
 	chdr.r_time = m_time;
 	chdr.r_token = m_token;
 	// Setup dhdr
-        dhdr.seq = htonl(uint32_t(seq));
-        dhdr.timestamp = htonl(now_us_wrap());
-        if (dhdr.timestamp == 0) { dhdr.timestamp = htonl(1); }
+	dhdr.seq = htonl(uint32_t(seq));
+	dhdr.timestamp = htonl(now_us_wrap());
+	if (dhdr.timestamp == 0) { dhdr.timestamp = htonl(1); }
 	// Copy actual data, maybe remove memcpy someday
-        memcpy(data, buf, len);
+	memcpy(data, buf, len);
 	// Send away
-        LOG_DEBUG("send SEQ (%u, %u, %u)", uint32_t(seq), uint32_t(len), htonl(dhdr.timestamp));
+	LOG_DEBUG("send SEQ (%u, %u, %u)", uint32_t(seq), uint32_t(len), htonl(dhdr.timestamp));
 	m_mgr.send_packet(m_who, sizeof(conn_hdr) + sizeof(data_hdr) + len);
 }
 
 void conn::send_ack(seq_t ack, size_t window, timestamp_t stamp)
 {
-        // Push back kee palive
-        m_mgr.m_tm.cancel(m_keep_alive);
-        m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
-        // Make space for headers
-        conn_hdr& chdr = *((conn_hdr*) (m_mgr.m_send_buf));
-        data_ack_hdr& dhdr = *((data_ack_hdr*) (m_mgr.m_send_buf + sizeof(conn_hdr)));
+	// Push back kee palive
+	m_mgr.m_tm.cancel(m_keep_alive);
+	m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
+	// Make space for headers
+	conn_hdr& chdr = *((conn_hdr*) (m_mgr.m_send_buf));
+	data_ack_hdr& dhdr = *((data_ack_hdr*) (m_mgr.m_send_buf + sizeof(conn_hdr)));
 	// Setup chdr
 	chdr.type = ptype::data_ack;
 	chdr.r_time = m_time;
 	chdr.r_token = m_token;
 	// Setup dhdr
-        dhdr.ack = htonl(uint32_t(ack));
-        dhdr.window = htonl(uint32_t(window));
-        dhdr.timestamp = htonl(uint32_t(stamp));
-        LOG_DEBUG("send ACK (%u, %u, %u)", uint32_t(ack), uint32_t(window), uint32_t(stamp));
+	dhdr.ack = htonl(uint32_t(ack));
+	dhdr.window = htonl(uint32_t(window));
+	dhdr.timestamp = htonl(uint32_t(stamp));
+	LOG_DEBUG("send ACK (%u, %u, %u)", uint32_t(ack), uint32_t(window), uint32_t(stamp));
 	m_mgr.send_packet(m_who, sizeof(conn_hdr) + sizeof(data_ack_hdr));
 }
 
 void conn::do_keep_alive()
 {
-        // Make space for headers
-        conn_hdr& chdr = *((conn_hdr*) (m_mgr.m_send_buf));
+	// Make space for headers
+	conn_hdr& chdr = *((conn_hdr*) (m_mgr.m_send_buf));
 	// Setup chdr
 	chdr.type = ptype::probe_ack;
 	chdr.r_time = m_time;
 	chdr.r_token = m_token;
 	// Send packet + reschedule
-        LOG_DEBUG("Sending keepalive");
+	LOG_INFO("Sending keepalive to %s", to_string(m_who).c_str());
 	m_mgr.send_packet(m_who, sizeof(conn_hdr));
-        m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
+	m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
 }
 
 void conn::do_kill_remote()
 {
+	LOG_INFO("Killing remote connection to %s due to inactivity", to_string(m_who).c_str());
 	m_kill_remote = 0;
 	if (m_socket->is_open()) {
 		m_socket->close();
@@ -134,6 +137,7 @@ void conn::do_kill_remote()
 
 void conn::socket_error(const error_code& error)
 {
+	LOG_INFO("Socket error on %s: %s", to_string(m_who).c_str(), error.message().c_str());
 	assert(m_state == state::running);
 	m_num_up--;
 	if (m_num_up > 0) {
@@ -142,6 +146,7 @@ void conn::socket_error(const error_code& error)
 		}
 		return;
 	}
+	LOG_INFO("Changing state to time_wait");
 	m_mgr.m_tm.cancel(m_keep_alive);
 	m_keep_alive = 0;
 	if (m_kill_remote) {
@@ -157,38 +162,39 @@ void conn::socket_error(const error_code& error)
 
 bool conn::process_packet(const conn_hdr &hdr, const char* data, size_t size)
 {
-        if (hdr.type == ptype::data_ack) {
-                if (size != sizeof(data_ack_hdr)) {
-                        return false;
-                }
-                const data_ack_hdr& hdr = *((const data_ack_hdr*) data);
-                duration d = std::chrono::microseconds(uint32_t(now_us_wrap() - ntohl(hdr.timestamp)));
-                m_send->on_ack(
-                        seq_t(ntohl(hdr.ack)),
-                        size_t(ntohl(hdr.window)),
-                        (hdr.timestamp == 0 ? NULL : &d));
-                return true;
-        } else if (hdr.type == ptype::data) {
-                if (size < sizeof(data_hdr)) {
-                        return false;
-                }
-                if (size > sizeof(data_hdr) + MSS) {
-                        return false;
-                }
-                size_t len = size - sizeof(data_hdr);
-                const data_hdr& hdr = *((const data_hdr*) data);
-                m_recv->on_packet(
-                        seq_t(ntohl(hdr.seq)),
-                        ntohl(hdr.timestamp),
-                        data + sizeof(data_hdr),
-                        len); 
+	if (hdr.type == ptype::data_ack) {
+		if (size != sizeof(data_ack_hdr)) {
+			return false;
+		}
+		const data_ack_hdr& hdr = *((const data_ack_hdr*) data);
+		duration d = std::chrono::microseconds(uint32_t(now_us_wrap() - ntohl(hdr.timestamp)));
+		m_send->on_ack(
+			seq_t(ntohl(hdr.ack)),
+			size_t(ntohl(hdr.window)),
+			(hdr.timestamp == 0 ? NULL : &d));
 		return true;
-        }
+	} else if (hdr.type == ptype::data) {
+		if (size < sizeof(data_hdr)) {
+			return false;
+		}
+		if (size > sizeof(data_hdr) + MSS) {
+			return false;
+		}
+		size_t len = size - sizeof(data_hdr);
+		const data_hdr& hdr = *((const data_hdr*) data);
+		m_recv->on_packet(
+			seq_t(ntohl(hdr.seq)),
+			ntohl(hdr.timestamp),
+			data + sizeof(data_hdr),
+			len); 
+		return true;
+	}
 	return false;
 }
 
 void conn::start_connect()
 {
+	LOG_INFO("Connecting to localhost");
 	m_socket = std::make_unique<tcp_socket>(m_mgr.m_tm.get_ios());
 	m_socket->async_connect(tcp_endpoint(ip_address_v4::loopback(), m_mgr.m_tcp_port), 
 		[this](const error_code& error) { on_connect(error); });
@@ -204,10 +210,12 @@ void conn::on_connect(const error_code& error)
 		m_mgr.m_tm.cancel(m_local_connect);
 	}
 	if (error) {
+		LOG_INFO("Connection to localhost failed: %s", error.message().c_str());
 		m_state = state::time_wait;
 		m_down_time = now_sec();
 		return;
 	}
+	LOG_INFO("Connection to localhost up");
 	m_state = state::running;
 	m_recv = std::make_unique<flow_recv>(m_mgr.m_tm, *m_socket, 
 		[this](seq_t ack, size_t window, timestamp_t stamp) {
@@ -236,13 +244,13 @@ conn_mgr::conn_mgr(timer_mgr& tm, udp_port& udp, uint16_t tcp_port, size_t goal_
 	, m_goal_conns(std::max(goal_conns, size_t(4)))
 	, m_max_conns(2*m_goal_conns)
 {
-        m_udp.add_protocol([this](const udp_endpoint& src, const char* buf, size_t len) -> bool {
+	m_udp.add_protocol([this](const udp_endpoint& src, const char* buf, size_t len) -> bool {
 		if (len >= sizeof(conn_hdr) && buf[0] == 'M') {
 			on_packet(src, buf, len);
 			return true;
 		}
 		return false;
-        });
+	});
 	RAND_bytes(m_secret, 16);
 }
 
@@ -250,17 +258,17 @@ void conn_mgr::send_probe(const udp_endpoint& remote)
 {
 	auto it = m_state.find(remote);
 	if (it != m_state.end() && it->second.m_state != conn::state::time_wait) {
-		LOG_DEBUG("Not sending a probe, since I'm connected");
+		LOG_INFO("Not sending a probe, since I'm connected");
 		return;
 	}
-        // Make space for headers
-        conn_hdr& chdr = *((conn_hdr*) (m_send_buf));
+	// Make space for headers
+	conn_hdr& chdr = *((conn_hdr*) (m_send_buf));
 	// Setup chdr
 	chdr.type = ptype::probe;
 	chdr.r_time = 0;
 	chdr.r_token = 0;
 	// Send packet
-        LOG_DEBUG("Sending probe to %s", to_string(remote).c_str());
+	LOG_INFO("Sending probe to %s", to_string(remote).c_str());
 	send_packet(remote, sizeof(conn_hdr));
 }
 
@@ -270,13 +278,13 @@ uint32_t conn_mgr::make_token(const udp_endpoint& who, uint32_t time) {
 	unsigned char buf[20];
 	std::string who_str = to_string(who);
 	SHA_CTX ctx;
-        SHA1_Init(&ctx);
-        SHA1_Update(&ctx, m_secret, 16);
-        SHA1_Update(&ctx, (const unsigned char *) who_str.c_str(), who_str.size());
-        SHA1_Update(&ctx, (const unsigned char *) &time, sizeof(uint32_t));
-        SHA1_Update(&ctx, m_secret, 16);
-        SHA1_Final(buf, &ctx);
-        return *((uint32_t*) buf);
+	SHA1_Init(&ctx);
+	SHA1_Update(&ctx, m_secret, 16);
+	SHA1_Update(&ctx, (const unsigned char *) who_str.c_str(), who_str.size());
+	SHA1_Update(&ctx, (const unsigned char *) &time, sizeof(uint32_t));
+	SHA1_Update(&ctx, m_secret, 16);
+	SHA1_Final(buf, &ctx);
+	return *((uint32_t*) buf);
 }
 
 void conn_mgr::send_packet(const udp_endpoint& dest, size_t len)
@@ -299,14 +307,14 @@ void conn_mgr::on_packet(const udp_endpoint& src, const char* buf, size_t len)
 		if (it == m_state.end() || 
 			(it->second.m_state == conn::state::time_wait && it->second.m_down_time < r_time)) {
 			// We are actually or logical down, respond
-			LOG_DEBUG("Acking a probe");
+			LOG_INFO("Probe from %s, ACKing", to_string(src).c_str());
 			conn_hdr& rhdr = *((conn_hdr*) m_send_buf);
 			rhdr.type = ptype::probe_ack;
 			rhdr.r_time = hdr->s_time;
 			rhdr.r_token = hdr->s_token;
 			send_packet(src, sizeof(conn_hdr));
 		} else {
-			LOG_DEBUG("Ignoring a probe");
+			LOG_INFO("Probe from %s, Ignoring", to_string(src).c_str());
 		}
 		return;
 	}
@@ -315,7 +323,7 @@ void conn_mgr::on_packet(const udp_endpoint& src, const char* buf, size_t len)
 	r_time = (r_time & 0xffffff00) | hdr->r_time;
 	uint32_t token = make_token(src, r_time);
 	if (token != hdr->r_token) {
-		LOG_DEBUG("Got a junk packet, ignoring");
+		LOG_INFO("From %s: Invalid token for non-probe", to_string(src).c_str());
 		return;
 	}
 	// Find or make state
@@ -342,7 +350,7 @@ int main()
 {
 	g_log_level[LT_FLOW] = LL_DEBUG;
 	g_log_level[LT_CONN] = LL_DEBUG;
-        io_service ios;
+	io_service ios;
 	int listeners = 2;
 	boost::asio::ip::tcp::acceptor l1 = {ios, tcp_endpoint(ip_address_v4::loopback(), 2000)};
 	boost::asio::ip::tcp::acceptor l2 = {ios, tcp_endpoint(ip_address_v4::loopback(), 2001)};
@@ -369,9 +377,9 @@ int main()
 		s2.send(boost::asio::buffer("World", 5));
 	});
 	LOG_DEBUG("Listeners running");
-        timer_mgr tm(ios);
-        udp_port up1(ios, 5000);
-        udp_port up2(ios, 5001);
+	timer_mgr tm(ios);
+	udp_port up1(ios, 5000);
+	udp_port up2(ios, 5001);
 	conn_mgr cm1(tm, up1, 2000);
 	conn_mgr cm2(tm, up2, 2001);
 	LOG_DEBUG("Connection managers running");

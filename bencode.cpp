@@ -7,13 +7,13 @@ public:
 	std::string operator()(const invalid_bencode value) const { 
 		throw std::runtime_error("Use of invalid becode"); 
 	}
-        std::string operator()(int value) const {
+	std::string operator()(int value) const {
 		return std::string("i") + std::to_string(value) + std::string("e");
 	}
-        std::string operator()(const std::string& value) const {
+	std::string operator()(const std::string& value) const {
 		return std::to_string(value.size()) + std::string(":") + value;		
 	}
-        std::string operator()(const be_vec& value) const {
+	std::string operator()(const be_vec& value) const {
 		std::string r = "l";
 		for(const bencode_t& x : value) {
 			r += boost::apply_visitor(bencode_vistor(), x);
@@ -21,7 +21,7 @@ public:
 		r += "e";
 		return r;
 	}
-        std::string operator()(const be_map& value) const {
+	std::string operator()(const be_map& value) const {
 		std::string r = "d";
 		for(const auto& kvp : value) {
 			r += (*this)(kvp.first);

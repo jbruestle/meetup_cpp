@@ -169,7 +169,7 @@ void flow_send::on_ack(seq_t ack, size_t window, const duration* rtt)
 		if (rtt_err < duration(0)) {
 			rtt_err = -rtt_err;
 		}
-        	m_rtt_dev = m_rtt_dev * 7 / 8 + rtt_err / 8;
+		m_rtt_dev = m_rtt_dev * 7 / 8 + rtt_err / 8;
 	}
 	if (ack > m_send_seq) {
 		// Hmm, TODO: examine this edge case more carefully
@@ -261,11 +261,11 @@ void flow_send::read_complete(const error_code& err, size_t len)
 {
 	m_read_pending = false;
 	if (err) {
-                LOG_INFO("read errored: err = %s", err.message().c_str());
+		LOG_INFO("read errored: err = %s", err.message().c_str());
 		m_on_err(err);
 		// Might be destroyed here
-                return;
-        }
+		return;
+	}
 	enqueue_in_flight(m_read_buf, len);
 	start_timer();
 	m_do_send(m_send_seq, m_read_buf, len);

@@ -4,17 +4,17 @@
 #define LOG_TOPIC LT_UDP
 
 udp_endpoint udp_resolve(io_service& ios, const std::string& ip, const std::string& port) {
-        udp_resolver resolver(ios);
-        udp_resolver::query query(boost::asio::ip::udp::v4(), ip, port);
-        udp_resolver::iterator it = resolver.resolve(query);
-        return *it;
+	udp_resolver resolver(ios);
+	udp_resolver::query query(boost::asio::ip::udp::v4(), ip, port);
+	udp_resolver::iterator it = resolver.resolve(query);
+	return *it;
 }
 
 tcp_endpoint tcp_resolve(io_service& ios, const std::string& ip, const std::string& port) {
-        boost::asio::ip::tcp::resolver resolver(ios);
-        boost::asio::ip::tcp::resolver::query query(boost::asio::ip::tcp::v4(), ip, port);
-        boost::asio::ip::tcp::resolver::iterator it = resolver.resolve(query);
-        return *it;
+	boost::asio::ip::tcp::resolver resolver(ios);
+	boost::asio::ip::tcp::resolver::query query(boost::asio::ip::tcp::v4(), ip, port);
+	boost::asio::ip::tcp::resolver::iterator it = resolver.resolve(query);
+	return *it;
 }
 
 std::string to_string(const udp_endpoint& ep) {
