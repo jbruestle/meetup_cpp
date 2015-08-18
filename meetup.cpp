@@ -78,12 +78,13 @@ void meetup::connect_timer()
 	if (!m_outgoing_qid) {
 		auto peers = m_dht.check_query(m_group_qid);
 		if (peers.size()) {
-			m_outgoing_addr = pick_random(peers);
+			m_outgoing_addr = pick_random(peers, true);
 			if (m_outgoing_addr == udp_endpoint()) {
-				LOG_DEBUG("Connected to everyone I'm interested in");
+				LOG_DEBUG("Connected to everyone recently");
 			} else {
 				LOG_INFO("Starting search for %s", to_string(m_outgoing_addr).c_str());
 				std::string outgoing_str = m_where_id.to_string() + m_outgoing_addr.address().to_string();
+				m_recent[m_outgoing_addr] = now();
 				m_outgoing_qid = m_dht.run_query(hash_id::hash_of(outgoing_str), 1_min);
 				m_dht.set_publish(m_outgoing_qid, true);
 				m_dht.set_ready_handler(m_outgoing_qid, [this]() {
@@ -110,7 +111,7 @@ void meetup::inbound_timer()
 {
 	auto peers = m_dht.check_query(m_incoming_qid);
 	if (peers.size()) {
-		udp_endpoint who = pick_random(peers);
+		udp_endpoint who = pick_random(peers, false);
 		if (who == udp_endpoint()) {
 			LOG_DEBUG("No one to send inbound timer to");
 		} else {
@@ -123,11 +124,15 @@ void meetup::inbound_timer()
 	m_inbound_timer = m_tm.add(now() + k_incoming_hello_rate, [this]() { inbound_timer(); });
 }
 
-udp_endpoint meetup::pick_random(const std::map<udp_endpoint, int>& peers)
+udp_endpoint meetup::pick_random(const std::map<udp_endpoint, int>& peers, bool remove_recent)
 {
 	std::set<udp_endpoint> valid;
 	for(const auto& kvp : peers) {
-		if (m_conn_mgr.has_conn(kvp.first)) {
+		udp_endpoint peer = kvp.first;
+		if (m_conn_mgr.has_conn(peer)) {
+			continue;
+		}
+		if (remove_recent && m_recent.count(peer) && now() - m_recent[peer] < 7_min) {
 			continue;
 		}
 		valid.insert(kvp.first);

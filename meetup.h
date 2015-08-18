@@ -13,7 +13,7 @@ private:
 	void on_stun_state(stun_mgr::stun_state s, const udp_endpoint& ep);
 	void connect_timer();
 	void inbound_timer();
-	udp_endpoint pick_random(const std::map<udp_endpoint, int>& peers);
+	udp_endpoint pick_random(const std::map<udp_endpoint, int>& peers, bool remove_recent);
 
 	std::string m_where;
 	io_service m_ios;
@@ -29,4 +29,5 @@ private:
 	timer_id m_connect_timer;
 	timer_id m_inbound_timer;
 	conn_mgr m_conn_mgr;
+	std::map<udp_endpoint, time_point> m_recent;
 };
