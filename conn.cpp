@@ -33,16 +33,23 @@ void conn::on_packet(const conn_hdr &hdr, const char* data, size_t len)
 {
 	assert(m_state != state::time_wait);
 	// Push back kill remote
-	m_mgr.m_tm.cancel(m_kill_remote);
-	m_kill_remote = m_mgr.m_tm.add(now() + 3 * KEEP_ALIVE, [this]() { do_kill_remote(); });
+	if (m_kill_remote) {
+		LOG_DEBUG("Got packet, pushing back death, canceling %d", m_kill_remote);
+		m_mgr.m_tm.cancel(m_kill_remote);
+		m_kill_remote = m_mgr.m_tm.add(now() + 3 * KEEP_ALIVE, [this]() { do_kill_remote(); });
+		LOG_DEBUG("New ID = %d", m_kill_remote);
+	}
 	// Update remote time + token
 	if (uint8_t(hdr.s_time - m_time) < 127) {
 		m_time = hdr.s_time;
 		m_token = hdr.s_token;
 	}
 	if (hdr.type != ptype::data && hdr.type != ptype::data_ack) {
-		LOG_WARN("Ignore strange packet from %s", to_string(m_who).c_str());
-		// Ignore any other types
+		if (hdr.type == ptype::probe_ack) {
+			LOG_INFO("Got probe-ack from %s", to_string(m_who).c_str());
+		} else {
+			LOG_WARN("Ignore strange packet from %s", to_string(m_who).c_str());
+		}
 		return;
 	}
 	if (m_state == state::starting) {
@@ -233,6 +240,7 @@ void conn::on_connect(const error_code& error)
 	m_num_up = 2;
 	m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
 	m_kill_remote = m_mgr.m_tm.add(now() + 3*KEEP_ALIVE, [this]() { do_kill_remote(); });
+	LOG_DEBUG("Arming kill remote: %d", m_kill_remote);
 	while(!m_queue.empty()) {
 		const pkt_queue_entry& entry = m_queue.front();
 		process_packet(entry.hdr, entry.data, entry.len);
@@ -386,7 +394,11 @@ int main()
 	conn_mgr cm1(tm, up1, 2000);
 	conn_mgr cm2(tm, up2, 2001);
 	LOG_DEBUG("Connection managers running");
-	cm1.send_probe(udp_endpoint(ip_address_v4::loopback(), 5001));
+	for(size_t i = 0; i < 100; i++) {	
+		tm.add(now() + 5_sec*i, [&]() {
+			cm1.send_probe(udp_endpoint(ip_address_v4::loopback(), 5001));
+		});
+	}
 	LOG_DEBUG("Probe sent");
 	ios.run();
 }
