@@ -79,17 +79,22 @@ void meetup::connect_timer()
 		auto peers = m_dht.check_query(m_group_qid);
 		if (peers.size()) {
 			m_outgoing_addr = pick_random(peers);
-			LOG_INFO("Starting search for %s", to_string(m_outgoing_addr).c_str());
-			std::string outgoing_str = m_where_id.to_string() + m_outgoing_addr.address().to_string();
-			m_outgoing_qid = m_dht.run_query(hash_id::hash_of(outgoing_str), 1_min);
-			m_dht.set_publish(m_outgoing_qid, true);
-			m_dht.set_ready_handler(m_outgoing_qid, [this]() {
-				LOG_INFO("Finished search for %s", to_string(m_outgoing_addr).c_str());
-				size_t out_qid = m_outgoing_qid;
-				m_outgoing_qid = 0;
-				// This might destroy this lambda?
-				m_dht.cancel_query(out_qid);
-			});
+			if (m_outgoing_addr == udp_endpoint()) {
+				LOG_DEBUG("Connected to everyone I'm interested in");
+			} else {
+				LOG_INFO("Starting search for %s", to_string(m_outgoing_addr).c_str());
+				std::string outgoing_str = m_where_id.to_string() + m_outgoing_addr.address().to_string();
+				m_outgoing_qid = m_dht.run_query(hash_id::hash_of(outgoing_str), 1_min);
+				m_dht.set_publish(m_outgoing_qid, true);
+				m_dht.set_ready_handler(m_outgoing_qid, [this]() {
+					LOG_INFO("Finished search for %s", to_string(m_outgoing_addr).c_str());
+					m_conn_mgr.send_probe(m_outgoing_addr);
+					size_t out_qid = m_outgoing_qid;
+					m_outgoing_qid = 0;
+					// This might destroy this lambda?
+					m_dht.cancel_query(out_qid);
+				});
+			}
 		} else {
 			LOG_INFO("No peers found for outbound");
 		}
@@ -106,8 +111,12 @@ void meetup::inbound_timer()
 	auto peers = m_dht.check_query(m_incoming_qid);
 	if (peers.size()) {
 		udp_endpoint who = pick_random(peers);
-		LOG_INFO("Sending probe  via incoming to %s", to_string(who).c_str());
-		m_conn_mgr.send_probe(who);
+		if (who == udp_endpoint()) {
+			LOG_DEBUG("No one to send inbound timer to");
+		} else {
+			LOG_INFO("Sending probe  via incoming to %s", to_string(who).c_str());
+			m_conn_mgr.send_probe(who);
+		}
 	} else {
 		LOG_INFO("No peers found for inbound");
 	}
@@ -116,20 +125,28 @@ void meetup::inbound_timer()
 
 udp_endpoint meetup::pick_random(const std::map<udp_endpoint, int>& peers)
 {
-	size_t i = random() % peers.size();
+	std::set<udp_endpoint> valid;
 	for(const auto& kvp : peers) {
+		if (m_conn_mgr.has_conn(kvp.first)) {
+			continue;
+		}
+		valid.insert(kvp.first);
+	}
+	if (valid.size() == 0) return udp_endpoint();
+	size_t i = random() % valid.size();
+	for(const auto& ep : valid) {
 		if (i == 0) {
-			return peers.begin()->first;
+			return ep;
 		}
 		i--;
 	}
-	throw std::runtime_error("Logic error in pick_random");
+	return udp_endpoint();
 }
 
 int main(int argc, char* argv[])
 {
 	g_log_level[LT_STUN] = LL_INFO;
-	//g_log_level[LT_DHT] = LL_INFO;
+	g_log_level[LT_DHT] = LL_INFO;
 	g_log_level[LT_FLOW] = LL_DEBUG;
 	g_log_level[LT_CONN] = LL_DEBUG;
 	try {

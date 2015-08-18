@@ -86,6 +86,7 @@ class conn_mgr
 	friend class conn;
 public:
 	conn_mgr(timer_mgr& tm, udp_port& udp, uint16_t tcp_port, size_t goal_conns = 8);
+	bool has_conn(const udp_endpoint& remote);	
 	void send_probe(const udp_endpoint& remote);
 
 private:

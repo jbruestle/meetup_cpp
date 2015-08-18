@@ -8,6 +8,8 @@ static const uint32_t k_magic_cookie = 0x2112A442;
 static const duration k_stun_timeout = 2_sec;
 static const duration k_short_send_delay = 100_ms;
 static const duration k_long_send_delay = 30_sec;
+static const size_t k_samples = 3;
+static const size_t k_errors = 5;
 
 static const std::vector<std::pair<std::string, std::string>> k_public_stun = {
 	{ "stun.l.google.com", "19302" },
@@ -157,11 +159,11 @@ void stun_mgr::on_incoming(const udp_endpoint& who, const char* buf, size_t len)
 
 	LOG_INFO("Got STUN response from %s: %s", to_string(who).c_str(), to_string(ep).c_str());
 	// Now do the state update
-	if (m_samples.size() < 5) {
+	if (m_samples.size() < k_samples) {
 		LOG_DEBUG("Adding to samples");
 		// Scanning, add samples
 		m_samples.push_back(ep);
-		if (m_samples.size() == 5) {
+		if (m_samples.size() == k_samples) {
 			process_samples();
 		}
 	} else {
@@ -177,7 +179,7 @@ void stun_mgr::on_incoming(const udp_endpoint& who, const char* buf, size_t len)
 		}
 	}
 	// Pick duration
-	duration wait_time = (m_samples.size() == 5 ? k_long_send_delay : k_short_send_delay);
+	duration wait_time = (m_samples.size() == k_samples ? k_long_send_delay : k_short_send_delay);
 	m_timeout = m_tm.add(now() + wait_time, [this]() { m_timeout = 0; send_packet(); });
 }
 
@@ -190,7 +192,7 @@ void stun_mgr::on_timeout()
 	// Update state goo
 	m_error_count++;
 	LOG_INFO("Timeout, error count = %lu", m_error_count);
-	if (m_error_count >= 5) {
+	if (m_error_count >= k_errors) {
 		if (m_state != state_down) {
 			LOG_INFO("Too many errors, going down");
 			m_samples.clear();
@@ -200,7 +202,7 @@ void stun_mgr::on_timeout()
 		}
 	}
 	// Prep a new packet to send		
-	duration wait_time = (m_error_count >= 5 ? k_long_send_delay : k_short_send_delay);
+	duration wait_time = (m_error_count >= k_errors ? k_long_send_delay : k_short_send_delay);
 	m_timeout = m_tm.add(now() + wait_time, [this]() { m_timeout = 0; send_packet(); });
 }
 
@@ -217,13 +219,13 @@ void stun_mgr::process_samples()
 	bool ep_quorum = false;
 	udp_endpoint choice;
 	for(const auto& kvp : by_ip) {
-		if (kvp.second >= 3) {
+		if (kvp.second >= k_samples/2 + 1) {
 			ip_quorum = true;
 			choice = udp_endpoint(kvp.first, 0);
 		}
 	}
 	for(const auto& kvp : by_ep) {
-		if (kvp.second >= 3) {
+		if (kvp.second >= k_samples/2 + 1) {
 			ep_quorum = true;
 			choice = kvp.first;
 		}

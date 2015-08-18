@@ -265,6 +265,15 @@ conn_mgr::conn_mgr(timer_mgr& tm, udp_port& udp, uint16_t tcp_port, size_t goal_
 	RAND_bytes(m_secret, 16);
 }
 
+bool conn_mgr::has_conn(const udp_endpoint& remote)
+{
+	auto it = m_state.find(remote);
+	if (it != m_state.end() && it->second.m_state != conn::state::time_wait) {
+		return true;
+	}
+	return false;
+}
+
 void conn_mgr::send_probe(const udp_endpoint& remote)
 {
 	auto it = m_state.find(remote);
