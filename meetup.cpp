@@ -129,7 +129,7 @@ udp_endpoint meetup::pick_random(const std::map<udp_endpoint, int>& peers)
 int main(int argc, char* argv[])
 {
 	g_log_level[LT_STUN] = LL_INFO;
-	g_log_level[LT_DHT] = LL_INFO;
+	//g_log_level[LT_DHT] = LL_INFO;
 	g_log_level[LT_FLOW] = LL_DEBUG;
 	g_log_level[LT_CONN] = LL_DEBUG;
 	try {

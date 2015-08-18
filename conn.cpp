@@ -139,23 +139,26 @@ void conn::socket_error(const error_code& error)
 {
 	LOG_INFO("Socket error on %s: %s", to_string(m_who).c_str(), error.message().c_str());
 	assert(m_state == state::running);
-	m_num_up--;
-	if (m_num_up > 0) {
-		if (m_socket->is_open()) {
-			m_socket->close();
-		}
-		return;
+	if (!m_recv->stop()) {
+		return; // Will be called again soon
+	}
+	if (!m_send->stop()) {
+		return; // Will be called again soon
 	}
 	LOG_INFO("Changing state to time_wait");
+	// Cancel keep-alive
 	m_mgr.m_tm.cancel(m_keep_alive);
 	m_keep_alive = 0;
+	// Cancel kill-remote
 	if (m_kill_remote) {
 		m_mgr.m_tm.cancel(m_kill_remote);
 		m_kill_remote = 0;
 	}
+	// Erase send and receive + socket
 	m_recv.reset();
 	m_send.reset();
 	m_socket.reset();
+	// Change state
 	m_state = state::time_wait;
 	m_down_time = now_sec();
 }

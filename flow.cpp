@@ -18,9 +18,7 @@ flow_recv::flow_recv(timer_mgr& tm, tcp_socket& sink, const send_func_t& do_send
 
 flow_recv::~flow_recv()
 {
-	if (m_sink.is_open()) { 
-		m_sink.close(); 
-	}
+	assert(!m_write_pending);
 	if (m_ack_timer) {
 		m_tm.cancel(m_ack_timer);
 	}
@@ -68,8 +66,19 @@ void flow_recv::on_packet(seq_t seq, timestamp_t stamp, const char* data, size_t
 	}
 }
 
+bool flow_recv::stop()
+{
+	if (m_sink.is_open()) {
+		m_sink.close();
+	}
+	return !m_write_pending;
+}
+
 void flow_recv::start_write()
 {
+	if (!m_sink.is_open()) {
+		return;
+	}
 	// Find the earliest
 	auto it = m_pkt_buf.begin();
 	// While it's before head, pop it
@@ -151,9 +160,7 @@ flow_send::flow_send(timer_mgr& tm, tcp_socket& source, const send_func_t& do_se
 
 flow_send::~flow_send()
 {
-	if (m_source.is_open()) { 
-		m_source.close(); 
-	}
+	assert(!m_read_pending);
 	if (m_send_timer) {
 		m_tm.cancel(m_send_timer);
 	}
@@ -242,8 +249,19 @@ void flow_send::on_ack(seq_t ack, size_t window, const duration* rtt)
 	start_read();					
 }
 
+bool flow_send::stop()
+{
+	if (m_source.is_open()) {
+		m_source.close();
+	}
+	return !m_read_pending;
+}
+
 void flow_send::start_read()
 {
+	if (!m_source.is_open()) {
+		return;
+	}
 	if (m_read_pending) {
 		return; // Read already pending
 	}

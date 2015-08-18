@@ -45,6 +45,8 @@ public:
 	// Called when a packet arrives, returns true if true if we
 	// need to generate an ACK immediately
 	void on_packet(seq_t seq, timestamp_t stamp, const char* data, size_t len);
+	// Called to 'stop' socket, returns true if stopped, otherwise will callback on_err
+	bool stop();
 private:
 	// Start a write
 	void start_write();	
@@ -85,6 +87,8 @@ public:
 	~flow_send();
 	// Called when an ACK packet arrives
 	void on_ack(seq_t ack, size_t window, const duration* rtt);
+	// Called to 'stop' socket, returns true if stopped, otherwise will callback on_err
+	bool stop();
 private:
 	// Start a read
 	void start_read();	
