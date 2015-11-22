@@ -7,14 +7,21 @@
 typedef std::chrono::system_clock::time_point time_point;
 typedef std::chrono::system_clock::duration duration;
 inline time_point now() { return std::chrono::system_clock::now(); }
+
 inline uint32_t now_us_wrap() { 
 	duration since_epoch = now().time_since_epoch();
 	return uint32_t(std::chrono::duration_cast<std::chrono::microseconds>(since_epoch).count());
 }
+
 inline uint32_t now_sec() { 
 	duration since_epoch = now().time_since_epoch();
 	return uint32_t(std::chrono::duration_cast<std::chrono::seconds>(since_epoch).count());
 }
+
+inline time_point time_from_sec(uint32_t tp) {
+	return std::chrono::system_clock::from_time_t(time_t(tp));
+}
+	
 inline duration operator "" _min(unsigned long long int x) { return std::chrono::minutes(x); }
 inline duration operator "" _sec(unsigned long long int x) { return std::chrono::seconds(x); }
 inline duration operator "" _ms(unsigned long long int x) { return std::chrono::milliseconds(x); }

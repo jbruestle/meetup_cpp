@@ -7,51 +7,57 @@
 
 #define LOG_TOPIC LT_CONN
 
-conn::conn(conn_mgr& mgr, const udp_endpoint& who, const conn_hdr &hdr) 
+static const duration REMOTE_CONN_TIME = 30_sec;
+static const duration LOCAL_CONN_TIME = 5_sec;
+static const duration SEND_KEEPALIVE_TIME = 5_sec;
+static const duration RECV_KEEPALIVE_TIME = 7 * SEND_KEEPALIVE_TIME / 2; 
+
+conn::conn(conn_mgr& mgr, const udp_endpoint& who, uint32_t s_time, uint32_t s_token) 
 	: m_mgr(mgr)
 	, m_who(who)
-	, m_state(state::starting)
-	, m_time(hdr.s_time)
-	, m_token(hdr.s_token)
-	, m_num_up(0)
-	, m_keep_alive(0)
-	, m_kill_remote(0)
+	, m_state(state::outbound)
+	, m_r_time(0)
+	, m_r_token(0)
+	, m_s_time(s_time)
+	, m_s_token(s_token)
+	, m_send_keep_alive(0)
 {
-	start_connect();
+	// Arm expiration
+	m_timer = m_mgr.m_tm.add(time_from_sec(s_time) + REMOTE_CONN_TIME, [this]() { on_timeout(); });
 }
 
-void conn::reset(const conn_hdr &hdr) 
+void conn::start_connect(uint8_t time, uint32_t token)
 {
-	assert(m_state == state::time_wait);
+	assert(m_state == state::outbound);
+	LOG_INFO("Connecting to localhost");
+	// Disarm remote connect, arm local connect
+	m_mgr.m_tm.cancel(m_timer);
+	m_timer = m_mgr.m_tm.add(now() + LOCAL_CONN_TIME, [this]() { on_timeout(); });
+	// Update state
 	m_state = state::starting;
-	m_time = hdr.s_time;
-	m_token = hdr.s_token;
-	start_connect();
+	m_r_time = time;
+	m_r_token = token;
+	// Kick off socket connect
+	m_socket = std::make_unique<tcp_socket>(m_mgr.m_tm.get_ios());
+	m_socket->async_connect(tcp_endpoint(ip_address_v4::loopback(), m_mgr.m_tcp_port), 
+		[this](const error_code& error) { on_connect(error); });
 }
 
 void conn::on_packet(const conn_hdr &hdr, const char* data, size_t len)
 {
-	assert(m_state != state::time_wait);
-	// Push back kill remote
-	if (m_kill_remote) {
-		LOG_DEBUG("Got packet, pushing back death, canceling %d", m_kill_remote);
-		m_mgr.m_tm.cancel(m_kill_remote);
-		m_kill_remote = m_mgr.m_tm.add(now() + 3 * KEEP_ALIVE, [this]() { do_kill_remote(); });
-		LOG_DEBUG("New ID = %d", m_kill_remote);
-	}
-	// Update remote time + token
-	if (uint8_t(hdr.s_time - m_time) < 127) {
-		m_time = hdr.s_time;
-		m_token = hdr.s_token;
-	}
+	// Only should get data in two states
+	assert(m_state == state::starting || m_state == state::running);
+
+	// Push back keepalive timer
+	m_mgr.m_tm.cancel(m_timer);
+	m_timer = m_mgr.m_tm.add(now() + RECV_KEEPALIVE_TIME, [this]() { on_timeout(); });
 	if (hdr.type != ptype::data && hdr.type != ptype::data_ack) {
-		if (hdr.type == ptype::probe_ack) {
-			LOG_INFO("Got probe-ack from %s", to_string(m_who).c_str());
-		} else {
+		if (hdr.type != ptype::final_ack) {
 			LOG_WARN("Ignore strange packet from %s", to_string(m_who).c_str());
 		}
 		return;
 	}
+	// If we don't yet have a local connection, queue it up
 	if (m_state == state::starting) {
 		LOG_INFO("Still connecting, queueing packet from %s", to_string(m_who).c_str());
 		m_queue.emplace(hdr, data, len);
@@ -60,6 +66,7 @@ void conn::on_packet(const conn_hdr &hdr, const char* data, size_t len)
 		}
 		return;
 	}
+	// Process packet
 	process_packet(hdr, data, len);
 }
 
@@ -74,11 +81,20 @@ struct data_ack_hdr {
 	uint32_t timestamp;
 };
 
+void conn::setup_chdr(conn_hdr& hdr)
+{
+	// Helper to stamp state onto chdr
+	hdr.s_time = m_s_time & 0xff;
+	hdr.s_token = m_s_token;
+	hdr.r_time = m_r_time;
+	hdr.r_token = m_r_token;
+}
+
 void conn::send_seq(seq_t seq, const char* buf, size_t len)
 {
-	// Push back keep alive
-	m_mgr.m_tm.cancel(m_keep_alive);
-	m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
+	// Push back keep alive send
+	m_mgr.m_tm.cancel(m_send_keep_alive);
+	m_send_keep_alive = m_mgr.m_tm.add(now() + SEND_KEEPALIVE_TIME, [this]() { send_keep_alive(); });
 	// Make space for headers
 	conn_hdr& chdr = *((conn_hdr*) (m_mgr.m_send_buf));
 	data_hdr& dhdr = *((data_hdr*) (m_mgr.m_send_buf + sizeof(conn_hdr)));
@@ -86,8 +102,7 @@ void conn::send_seq(seq_t seq, const char* buf, size_t len)
 	assert(sizeof(conn_hdr) + sizeof(data_hdr) + len < 2048);
 	// Setup chdr
 	chdr.type = ptype::data;
-	chdr.r_time = m_time;
-	chdr.r_token = m_token;
+	setup_chdr(chdr);
 	// Setup dhdr
 	dhdr.seq = htonl(uint32_t(seq));
 	dhdr.timestamp = htonl(now_us_wrap());
@@ -101,16 +116,15 @@ void conn::send_seq(seq_t seq, const char* buf, size_t len)
 
 void conn::send_ack(seq_t ack, size_t window, timestamp_t stamp)
 {
-	// Push back kee palive
-	m_mgr.m_tm.cancel(m_keep_alive);
-	m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
+	// Push back keep alive send
+	m_mgr.m_tm.cancel(m_send_keep_alive);
+	m_send_keep_alive = m_mgr.m_tm.add(now() + SEND_KEEPALIVE_TIME, [this]() { send_keep_alive(); });
 	// Make space for headers
 	conn_hdr& chdr = *((conn_hdr*) (m_mgr.m_send_buf));
 	data_ack_hdr& dhdr = *((data_ack_hdr*) (m_mgr.m_send_buf + sizeof(conn_hdr)));
 	// Setup chdr
 	chdr.type = ptype::data_ack;
-	chdr.r_time = m_time;
-	chdr.r_token = m_token;
+	setup_chdr(chdr);
 	// Setup dhdr
 	dhdr.ack = htonl(uint32_t(ack));
 	dhdr.window = htonl(uint32_t(window));
@@ -119,25 +133,27 @@ void conn::send_ack(seq_t ack, size_t window, timestamp_t stamp)
 	m_mgr.send_packet(m_who, sizeof(conn_hdr) + sizeof(data_ack_hdr));
 }
 
-void conn::do_keep_alive()
+void conn::send_keep_alive()
 {
 	// Make space for headers
 	conn_hdr& chdr = *((conn_hdr*) (m_mgr.m_send_buf));
 	// Setup chdr
-	chdr.type = ptype::probe_ack;
-	chdr.r_time = m_time;
-	chdr.r_token = m_token;
+	chdr.type = ptype::final_ack;
+	setup_chdr(chdr);
 	// Send packet + reschedule
 	LOG_INFO("Sending keepalive to %s", to_string(m_who).c_str());
 	m_mgr.send_packet(m_who, sizeof(conn_hdr));
-	m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
+	m_send_keep_alive = m_mgr.m_tm.add(now() + SEND_KEEPALIVE_TIME, [this]() { send_keep_alive(); });
 }
 
-void conn::do_kill_remote()
+void conn::on_timeout()
 {
-	LOG_INFO("Killing remote connection to %s due to inactivity", to_string(m_who).c_str());
-	m_kill_remote = 0;
-	if (m_socket->is_open()) {
+	LOG_INFO("Timeout with state = %d", m_state);
+	if (m_state == state::outbound || m_state == state::time_wait) {
+		// Delete myself
+		m_mgr.m_state.erase(m_who);
+	} else {
+		// Kick off destruction
 		m_socket->close();
 	}
 }
@@ -153,25 +169,21 @@ void conn::socket_error(const error_code& error)
 		return; // Will be called again soon
 	}
 	LOG_INFO("Changing state to time_wait");
-	// Cancel keep-alive
-	m_mgr.m_tm.cancel(m_keep_alive);
-	m_keep_alive = 0;
-	// Cancel kill-remote
-	if (m_kill_remote) {
-		m_mgr.m_tm.cancel(m_kill_remote);
-		m_kill_remote = 0;
-	}
+	// Cancel sending of keep alive
+	m_mgr.m_tm.cancel(m_send_keep_alive);
+	// Cancel per state timer
+	m_mgr.m_tm.cancel(m_timer);
 	// Erase send and receive + socket
 	m_recv.reset();
 	m_send.reset();
 	m_socket.reset();
-	// Change state
-	m_state = state::time_wait;
-	m_down_time = now_sec();
+	// Go to time wait
+	go_time_wait();
 }
 
 bool conn::process_packet(const conn_hdr &hdr, const char* data, size_t size)
 {
+	assert(m_state == state::running);
 	if (hdr.type == ptype::data_ack) {
 		if (size != sizeof(data_ack_hdr)) {
 			return false;
@@ -202,27 +214,12 @@ bool conn::process_packet(const conn_hdr &hdr, const char* data, size_t size)
 	return false;
 }
 
-void conn::start_connect()
-{
-	LOG_INFO("Connecting to localhost");
-	m_socket = std::make_unique<tcp_socket>(m_mgr.m_tm.get_ios());
-	m_socket->async_connect(tcp_endpoint(ip_address_v4::loopback(), m_mgr.m_tcp_port), 
-		[this](const error_code& error) { on_connect(error); });
-	m_local_connect = m_mgr.m_tm.add(now() + 10_sec, [this]() {
-		m_local_connect = 0;
-		m_socket->close();
-	});
-};
-
 void conn::on_connect(const error_code& error)
 {
-	if (m_local_connect != 0) {
-		m_mgr.m_tm.cancel(m_local_connect);
-	}
+	m_mgr.m_tm.cancel(m_timer);
 	if (error) {
 		LOG_INFO("Connection to localhost failed: %s", error.message().c_str());
-		m_state = state::time_wait;
-		m_down_time = now_sec();
+		go_time_wait();
 		return;
 	}
 	LOG_INFO("Connection to localhost up");
@@ -237,14 +234,25 @@ void conn::on_connect(const error_code& error)
 			send_seq(seq, buf, len);
 		},
 		[this](const error_code& err) { socket_error(err); });
-	m_num_up = 2;
-	m_keep_alive = m_mgr.m_tm.add(now() + KEEP_ALIVE, [this]() { do_keep_alive(); });
-	m_kill_remote = m_mgr.m_tm.add(now() + 3*KEEP_ALIVE, [this]() { do_kill_remote(); });
-	LOG_DEBUG("Arming kill remote: %d", m_kill_remote);
+	m_timer = m_mgr.m_tm.add(now() + RECV_KEEPALIVE_TIME, [this]() { on_timeout(); });
+	m_send_keep_alive = m_mgr.m_tm.add(now() + SEND_KEEPALIVE_TIME, [this]() { send_keep_alive(); });
 	while(!m_queue.empty()) {
 		const pkt_queue_entry& entry = m_queue.front();
 		process_packet(entry.hdr, entry.data, entry.len);
 		m_queue.pop();
+	}
+}
+
+void conn::go_time_wait()
+{
+	// If I need to wait, do the time wait thing
+	time_point tp_wait = time_from_sec(m_s_time) + REMOTE_CONN_TIME;
+	if (now() <= tp_wait) {
+		m_state = state::time_wait;
+		m_timer = m_mgr.m_tm.add(tp_wait, [this]() { on_timeout(); });
+	} else {
+		// Delete myself
+		m_mgr.m_state.erase(m_who);
 	}
 }
 
@@ -267,6 +275,7 @@ conn_mgr::conn_mgr(timer_mgr& tm, udp_port& udp, uint16_t tcp_port, size_t goal_
 
 bool conn_mgr::has_conn(const udp_endpoint& remote)
 {
+	// TODO: Who calls this, does this mean what we thing?
 	auto it = m_state.find(remote);
 	if (it != m_state.end() && it->second.m_state != conn::state::time_wait) {
 		return true;
@@ -277,17 +286,19 @@ bool conn_mgr::has_conn(const udp_endpoint& remote)
 void conn_mgr::send_probe(const udp_endpoint& remote)
 {
 	auto it = m_state.find(remote);
-	if (it != m_state.end() && it->second.m_state != conn::state::time_wait) {
-		LOG_INFO("Not sending a probe, since I'm connected");
-		return;
+	if (it == m_state.end()) {
+		// Make a new 'outgoing' state if needed
+		uint32_t s_time = now_sec();
+		uint32_t s_token = make_token(remote, s_time);
+		it = m_state.emplace(std::piecewise_construct, 
+			std::forward_as_tuple(remote),
+			std::forward_as_tuple(*this, remote, s_time, s_token)).first;
 	}
 	// Make space for headers
 	conn_hdr& chdr = *((conn_hdr*) (m_send_buf));
 	// Setup chdr
 	chdr.type = ptype::probe;
-	chdr.r_time = 0;
-	chdr.r_token = 0;
-	// Send packet
+	it->second.setup_chdr(chdr);
 	LOG_INFO("Sending probe to %s", to_string(remote).c_str());
 	send_packet(remote, sizeof(conn_hdr));
 }
@@ -311,9 +322,6 @@ void conn_mgr::send_packet(const udp_endpoint& dest, size_t len)
 {
 	conn_hdr& hdr = *((conn_hdr*) m_send_buf);
 	hdr.magic = 'M';
-	uint32_t now = now_sec();
-	hdr.s_time = now & 0xff;
-	hdr.s_token = make_token(dest, now);
 	m_udp.send(dest, m_send_buf, len);
 }
 
@@ -321,45 +329,83 @@ void conn_mgr::on_packet(const udp_endpoint& src, const char* buf, size_t len)
 {
 	const conn_hdr* hdr = (const conn_hdr*) buf;
 	uint32_t r_time = now_sec();
+	auto it = m_state.find(src);
+
+	// Handle probe case
 	if (hdr->type == ptype::probe) {
-		// No need to validate probes
-		auto it = m_state.find(src);
-		if (it == m_state.end() || 
-			(it->second.m_state == conn::state::time_wait && it->second.m_down_time < r_time)) {
-			// We are actually or logical down, respond
+		if (it == m_state.end() || it->second.m_state == conn::state::outbound) {
+			// Respond with a valid token
 			LOG_INFO("Probe from %s, ACKing", to_string(src).c_str());
 			conn_hdr& rhdr = *((conn_hdr*) m_send_buf);
 			rhdr.type = ptype::probe_ack;
 			rhdr.r_time = hdr->s_time;
 			rhdr.r_token = hdr->s_token;
+			if (it != m_state.end()) {
+				rhdr.s_time = it->second.m_s_time & 0xff;
+				rhdr.s_time = it->second.m_s_token;
+			} else {
+				rhdr.s_time = r_time & 0xff;
+				rhdr.s_token = make_token(src, r_time);
+			}
 			send_packet(src, sizeof(conn_hdr));
 		} else {
 			LOG_INFO("Probe from %s, Ignoring", to_string(src).c_str());
 		}
 		return;
 	}
-	// Otherwise validate token	
-	if (hdr->r_time > (r_time & 0xff)) r_time -= 256;
-	r_time = (r_time & 0xffffff00) | hdr->r_time;
-	uint32_t token = make_token(src, r_time);
-	if (token != hdr->r_token) {
-		LOG_INFO("From %s: Invalid token for non-probe", to_string(src).c_str());
-		return;
-	}
-	// Find or make state
-	auto it = m_state.find(src);
-	if (it == m_state.end()) {
+	// Handle final-ack construction case
+	if (it == m_state.end() && hdr->type == ptype::final_ack) {
+		// No current state, if valid, start connection
+		if (hdr->r_time > (r_time & 0xff)) r_time -= 256;
+		r_time = (r_time & 0xffffff00) | hdr->r_time;
+		uint32_t token = make_token(src, r_time);
+		if (token != hdr->r_token) {
+			LOG_INFO("From %s: Invalid token for probe_ack", to_string(src).c_str());
+			return;
+		}
+		LOG_INFO("From %s: Valid final_ack for forgotten probe_ack", to_string(src).c_str());
+		// Brings us to 'outgoing' state
 		it = m_state.emplace(std::piecewise_construct, 
 			std::forward_as_tuple(src),
-			std::forward_as_tuple(*this, src, *hdr)).first;
+			std::forward_as_tuple(*this, src, r_time, hdr->r_token)).first;
 	}
-	if (it->second.m_state == conn::state::time_wait) {
-		if (r_time <= it->second.m_down_time) {
-			// Packet is from previous connection, ignore
+	if (it == m_state.end()) {
+		LOG_INFO("From %s: Ignoring everything but probe/final-ack for empty state", to_string(src).c_str());
+		return;
+	}
+	if (hdr->type == ptype::probe_ack || hdr->type == ptype::final_ack) {
+		// If not a valid response based on outgoing, bail right away
+		if (hdr->r_time != (it->second.m_s_time & 0xff) || 
+			hdr->r_token != it->second.m_s_token) {
+			LOG_INFO("From %s: Invalid local token for probe_ack", to_string(src).c_str());
 			return;
-		} else {
-			it->second.reset(*hdr);
 		}
+		// Ok, move outgoing connections forward to starting
+		if (it->second.m_state == conn::state::outbound) {
+			it->second.start_connect(hdr->s_time, hdr->s_token);
+		}
+		// Make sure we are not in time wait
+		if (it->second.m_state == conn::state::time_wait) {
+			LOG_INFO("From %s: Ignoring probe-ack while in time_wait", to_string(src).c_str());
+			return;
+		}
+		// If not valid remote tokens, bail
+		if (hdr->s_time != it->second.m_r_time ||
+			hdr->s_token != it->second.m_r_token) {
+			LOG_INFO("From %s: Invalid remote token for probe_ack", to_string(src).c_str());
+			return;
+		}
+		if (hdr->type == ptype::probe_ack) {
+			// Maybe Send final ack
+			LOG_INFO("From %s: Got probe ack, sending final_ack", to_string(src).c_str());
+			conn_hdr& rhdr = *((conn_hdr*) m_send_buf);
+			rhdr.type = ptype::final_ack;
+			it->second.setup_chdr(rhdr);
+			send_packet(src, sizeof(conn_hdr));
+			return;
+		}
+		LOG_INFO("From %s: Got final ack", to_string(src).c_str());
+		// Fall through to on packet to allow keepalive to conn
 	}
 	// Give them the packet
 	it->second.on_packet(*hdr, buf + sizeof(conn_hdr), len - sizeof(conn_hdr));
@@ -403,7 +449,7 @@ int main()
 	conn_mgr cm1(tm, up1, 2000);
 	conn_mgr cm2(tm, up2, 2001);
 	LOG_DEBUG("Connection managers running");
-	for(size_t i = 0; i < 100; i++) {	
+	for(size_t i = 0; i < 3; i++) {	
 		tm.add(now() + 5_sec*i, [&]() {
 			cm1.send_probe(udp_endpoint(ip_address_v4::loopback(), 5001));
 		});

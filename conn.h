@@ -10,8 +10,9 @@ enum class ptype : char
 {
 	probe = 0,
 	probe_ack = 1,
-	data = 2,
-	data_ack = 3,
+	final_ack = 2,
+	data = 3,
+	data_ack = 4,
 };
 
 struct __attribute__ ((__packed__)) conn_hdr 
@@ -31,24 +32,37 @@ class conn
 	friend class conn_mgr;
 public:
 	// Constructor public to make emplace work
-	conn(conn_mgr& mgr, const udp_endpoint& who, const conn_hdr& hdr);
+	// Constructs in the 'outgoing' state
+	conn(conn_mgr& mgr, const udp_endpoint& who, uint32_t s_time, uint32_t s_token);
 
 private:
-	void reset(const conn_hdr& hdr);
+	// Moves from outbound to 'starting'
+	void start_connect(uint8_t r_time, uint32_t r_token);
+	// Packet handling for data packets
 	void on_packet(const conn_hdr &hdr, const char* data, size_t len);
+	// Setup chdr
+	void setup_chdr(conn_hdr& hdr);
+	// Called by flow system
 	void send_seq(seq_t seq, const char* buf, size_t len);
 	void send_ack(seq_t ack, size_t window, timestamp_t stamp);
-	void do_keep_alive();
-	void do_kill_remote();
+	// Send a keepalive
+	void send_keep_alive();
+	// Per state timeouts
+	void on_timeout();
+	// Called when a socket error happens
 	void socket_error(const error_code& error);
+	// Inner part of 'process packet'
 	bool process_packet(const conn_hdr &hdr, const char* data, size_t len);
-	void start_connect();
+	// Local connection callback
 	void on_connect(const error_code& error);
+	// Go to time wait or vanish
+	void go_time_wait();
 
 	enum class state {
-		starting,
-		running,
-		time_wait,
+		outbound,  // I send a probe
+		starting,  // Got a probe-ack or final-ack, waiting on localhost
+		running,   // All running
+		time_wait, // Lost my connection, but token of old connection would still be valid
 	};
 
 	struct pkt_queue_entry {
@@ -68,13 +82,12 @@ private:
 	conn_mgr& m_mgr;
 	udp_endpoint m_who;
 	state m_state;
-	uint8_t m_time;
-	uint32_t m_token;
-	uint32_t m_down_time;
-	timer_id m_local_connect;
-	timer_id m_keep_alive;
-	timer_id m_kill_remote;
-	int m_num_up;
+	uint32_t m_s_time;
+	uint32_t m_s_token;
+	uint8_t  m_r_time;
+	uint32_t m_r_token;
+	timer_id m_timer;
+	timer_id m_send_keep_alive;
 	std::unique_ptr<tcp_socket> m_socket;
 	std::unique_ptr<flow_recv> m_recv;
 	std::unique_ptr<flow_send> m_send;
