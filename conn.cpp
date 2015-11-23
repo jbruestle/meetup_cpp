@@ -323,6 +323,8 @@ void conn_mgr::send_packet(const udp_endpoint& dest, size_t len)
 	conn_hdr& hdr = *((conn_hdr*) m_send_buf);
 	hdr.magic = 'M';
 	m_udp.send(dest, m_send_buf, len);
+	LOG_DEBUG("Sending packet, type = %d, s_time = %u, s_token = %x, r_time = %u, r_token = %x",
+		int(hdr.type), hdr.s_time, hdr.s_token, hdr.r_time, hdr.r_token);
 }
 
 void conn_mgr::on_packet(const udp_endpoint& src, const char* buf, size_t len)
@@ -373,41 +375,43 @@ void conn_mgr::on_packet(const udp_endpoint& src, const char* buf, size_t len)
 		LOG_INFO("From %s: Ignoring everything but probe/final-ack for empty state", to_string(src).c_str());
 		return;
 	}
-	if (hdr->type == ptype::probe_ack || hdr->type == ptype::final_ack) {
-		// If not a valid response based on outgoing, bail right away
-		if (hdr->r_time != (it->second.m_s_time & 0xff) || 
-			hdr->r_token != it->second.m_s_token) {
-			LOG_INFO("From %s: Invalid local token for probe_ack", to_string(src).c_str());
+	// If not a valid response based on outgoing, bail right away
+	if (hdr->r_time != (it->second.m_s_time & 0xff) || 
+		hdr->r_token != it->second.m_s_token) {
+		LOG_INFO("From %s: Invalid local token for probe_ack", to_string(src).c_str());
+		return;
+	}
+	// Make sure we are not in time wait
+	if (it->second.m_state == conn::state::time_wait) {
+		LOG_INFO("From %s: Ignoring packet while in time_wait", to_string(src).c_str());
+		return;
+	}
+	if (it->second.m_state == conn::state::outbound) {
+		if (hdr->type != ptype::probe_ack && hdr->type != ptype::final_ack) {
+			LOG_INFO("Getting a probe-ack while connected, ignoring");
 			return;
 		}
 		// Ok, move outgoing connections forward to starting
 		if (it->second.m_state == conn::state::outbound) {
 			it->second.start_connect(hdr->s_time, hdr->s_token);
 		}
-		// Make sure we are not in time wait
-		if (it->second.m_state == conn::state::time_wait) {
-			LOG_INFO("From %s: Ignoring probe-ack while in time_wait", to_string(src).c_str());
-			return;
-		}
-		// If not valid remote tokens, bail
-		if (hdr->s_time != it->second.m_r_time ||
-			hdr->s_token != it->second.m_r_token) {
-			LOG_INFO("From %s: Invalid remote token for probe_ack", to_string(src).c_str());
-			return;
-		}
-		if (hdr->type == ptype::probe_ack) {
-			// Maybe Send final ack
-			LOG_INFO("From %s: Got probe ack, sending final_ack", to_string(src).c_str());
-			conn_hdr& rhdr = *((conn_hdr*) m_send_buf);
-			rhdr.type = ptype::final_ack;
-			it->second.setup_chdr(rhdr);
-			send_packet(src, sizeof(conn_hdr));
-			return;
-		}
-		LOG_INFO("From %s: Got final ack", to_string(src).c_str());
-		// Fall through to on packet to allow keepalive to conn
 	}
-	// Give them the packet
+	// If not valid remote tokens, bail
+	if (hdr->s_time != it->second.m_r_time ||
+		hdr->s_token != it->second.m_r_token) {
+		LOG_INFO("From %s: Invalid remote token for probe_ack", to_string(src).c_str());
+		return;
+	}
+	if (hdr->type == ptype::probe_ack) {
+		// Maybe Send final ack
+		LOG_INFO("From %s: Got probe ack, sending final_ack", to_string(src).c_str());
+		conn_hdr& rhdr = *((conn_hdr*) m_send_buf);
+		rhdr.type = ptype::final_ack;
+		it->second.setup_chdr(rhdr);
+		send_packet(src, sizeof(conn_hdr));
+		return;
+	}
+	// Pass packet on to connection
 	it->second.on_packet(*hdr, buf + sizeof(conn_hdr), len - sizeof(conn_hdr));
 }
 
