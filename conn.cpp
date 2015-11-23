@@ -354,7 +354,7 @@ void conn_mgr::on_packet(const udp_endpoint& src, const char* buf, size_t len)
 			}
 			LOG_INFO("Acking half blind");
 			rhdr.s_time = it->second.m_s_time & 0xff;
-			rhdr.s_time = it->second.m_s_token;
+			rhdr.s_token = it->second.m_s_token;
 			send_packet(src, sizeof(conn_hdr));
 			return;
 		} else {
