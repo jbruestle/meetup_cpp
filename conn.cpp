@@ -333,23 +333,30 @@ void conn_mgr::on_packet(const udp_endpoint& src, const char* buf, size_t len)
 	uint32_t r_time = now_sec();
 	auto it = m_state.find(src);
 
+	LOG_DEBUG("Receiving packet, type = %d, s_time = %u, s_token = %x, r_time = %u, r_token = %x",
+		int(hdr->type), hdr->s_time, hdr->s_token, hdr->r_time, hdr->r_token);
+
 	// Handle probe case
 	if (hdr->type == ptype::probe) {
 		if (it == m_state.end() || it->second.m_state == conn::state::outbound) {
 			// Respond with a valid token
-			LOG_INFO("Probe from %s, ACKing", to_string(src).c_str());
+			LOG_INFO("Probe from %s", to_string(src).c_str());
 			conn_hdr& rhdr = *((conn_hdr*) m_send_buf);
 			rhdr.type = ptype::probe_ack;
 			rhdr.r_time = hdr->s_time;
 			rhdr.r_token = hdr->s_token;
-			if (it != m_state.end()) {
-				rhdr.s_time = it->second.m_s_time & 0xff;
-				rhdr.s_time = it->second.m_s_token;
-			} else {
+			if (it == m_state.end()) {
+				LOG_INFO("Acking blind");
 				rhdr.s_time = r_time & 0xff;
 				rhdr.s_token = make_token(src, r_time);
+				send_packet(src, sizeof(conn_hdr));
+				return;
 			}
+			LOG_INFO("Acking half blind");
+			rhdr.s_time = it->second.m_s_time & 0xff;
+			rhdr.s_time = it->second.m_s_token;
 			send_packet(src, sizeof(conn_hdr));
+			return;
 		} else {
 			LOG_INFO("Probe from %s, Ignoring", to_string(src).c_str());
 		}
