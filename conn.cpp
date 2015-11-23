@@ -294,6 +294,10 @@ void conn_mgr::send_probe(const udp_endpoint& remote)
 			std::forward_as_tuple(remote),
 			std::forward_as_tuple(*this, remote, s_time, s_token)).first;
 	}
+	if (it->second.m_state != conn::state::outbound) {
+		LOG_INFO("Not in outbound state, ignoring send_probe");
+		return;
+	}
 	// Make space for headers
 	conn_hdr& chdr = *((conn_hdr*) (m_send_buf));
 	// Setup chdr
